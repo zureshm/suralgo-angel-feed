@@ -3,6 +3,9 @@ require("dotenv").config();
 const { SmartAPI, WebSocketV2 } = require("smartapi-javascript");
 const { authenticator } = require("otplib");
 
+const STRATEGY_URL = "http://localhost:4000/evaluate";
+const SYMBOL = "NIFTY30MAR2623500CE";
+
 let currentCandle = null;
 let lastMinute = null;
 let completedCandles = [];
@@ -36,19 +39,31 @@ function getNextMinute(minuteString) {
 
 async function sendCandleToStrategy(candle) {
   try {
-    const response = await fetch("http://localhost:4000/evaluate", {
+    const response = await fetch(STRATEGY_URL, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        symbol: "NIFTY30MAR2623500CE",
-        candle,
-        }), 
+        symbol: SYMBOL,
+        candle: candle,
+      }),
     });
 
     const data = await response.json();
-    console.log("Strategy response:", data);
+
+    if (response.ok) {
+      console.log(
+        `Sent candle to strategy: ${candle.time} | ${SYMBOL} | status ${response.status} | signal ${data.signal}`
+      );
+      console.log("Strategy response:", data);
+      return;
+    }
+
+    console.error(
+      `Strategy engine error: status ${response.status}`
+    );
+    console.error("Strategy error response:", data);
   } catch (error) {
     console.error("Send candle failed:", error.message);
   }
@@ -173,7 +188,7 @@ async function run() {
     });
 
     ws.fetchData({
-      correlationID: "NIFTY30MAR2623500CE",
+      correlationID: SYMBOL,
       action: 1,
       mode: 2,
       exchangeType: 2,
