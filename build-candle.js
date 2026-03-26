@@ -2,13 +2,18 @@ require("dotenv").config();
 
 const { SmartAPI, WebSocketV2 } = require("smartapi-javascript");
 const { authenticator } = require("otplib");
+const { loadScripMaster } = require("./loadScripMaster");
 
 const STRATEGY_URL = "http://localhost:4000/evaluate";
-const SYMBOL = "NIFTY30MAR2623500CE";
+
 
 let currentCandle = null;
 let lastMinute = null;
 let completedCandles = [];
+
+// Track what symbol/token is currently subscribed
+let currentSubscribedSymbol = null;
+let currentSubscribedToken = null;
 
 function formatMinute(timestamp) {
   const date = new Date(Number(timestamp));
@@ -37,6 +42,78 @@ function getNextMinute(minuteString) {
   return `${year}-${month}-${day} ${hours}:${minutes}`;
 }
 
+// Read the currently active symbol from local API server
+async function getActiveSymbol() {
+  try {
+    const response = await fetch("http://localhost:2000/active-symbol");
+    const data = await response.json();
+    return data.activeSymbol || null;
+  } catch (error) {
+    console.error("Get active symbol failed:", error.message);
+    return null;
+  }
+}
+
+// Find token for the currently active symbol from Angel scrip master
+async function getTokenForSymbol(symbol) {
+  try {
+    const rows = await loadScripMaster();
+
+    const match = rows.find((item) => item.symbol === symbol);
+
+    if (!match) {
+      console.error("Token not found for symbol:", symbol);
+      return null;
+    }
+
+    return match.token;
+  } catch (error) {
+    console.error("Get token for symbol failed:", error.message);
+    return null;
+  }
+}
+
+// Subscribe to a symbol only if it changed
+async function subscribeToActiveSymbol(ws) {
+  const activeSymbol = await getActiveSymbol();
+
+ // No symbol selected yet from frontend
+// This is a normal waiting state, not an error
+if (!activeSymbol) {
+  return;
+}
+
+  if (activeSymbol === currentSubscribedSymbol) {
+    return;
+  }
+
+  const activeToken = await getTokenForSymbol(activeSymbol);
+
+  if (!activeToken) {
+    console.error("No token found for active symbol:", activeSymbol);
+    return;
+  }
+
+  currentSubscribedSymbol = activeSymbol;
+  currentSubscribedToken = String(activeToken);
+
+  // Reset candle state when symbol changes
+  currentCandle = null;
+  lastMinute = null;
+  completedCandles = [];
+
+  console.log("Subscribing to active symbol:", currentSubscribedSymbol);
+  console.log("Using token:", currentSubscribedToken);
+
+  ws.fetchData({
+    correlationID: currentSubscribedSymbol,
+    action: 1,
+    mode: 2,
+    exchangeType: 2,
+    tokens: [currentSubscribedToken],
+  });
+}
+
 // Send latest market time to local API server
 async function sendMarketTime(minute) {
   try {
@@ -54,15 +131,23 @@ async function sendMarketTime(minute) {
   }
 }
 
+// Send completed candle to strategy for the currently active symbol
 async function sendCandleToStrategy(candle) {
   try {
+    const activeSymbol = await getActiveSymbol();
+
+    if (!activeSymbol) {
+      console.error("No active symbol found. Candle not sent to strategy.");
+      return;
+    }
+
     const response = await fetch(STRATEGY_URL, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        symbol: SYMBOL,
+        symbol: activeSymbol,
         candle: candle,
       }),
     });
@@ -71,15 +156,13 @@ async function sendCandleToStrategy(candle) {
 
     if (response.ok) {
       console.log(
-        `Sent candle to strategy: ${candle.time} | ${SYMBOL} | status ${response.status} | signal ${data.signal}`
+        `Sent candle to strategy: ${candle.time} | ${activeSymbol} | status ${response.status} | signal ${data.signal}`
       );
       console.log("Strategy response:", data);
       return;
     }
 
-    console.error(
-      `Strategy engine error: status ${response.status}`
-    );
+    console.error(`Strategy engine error: status ${response.status}`);
     console.error("Strategy error response:", data);
   } catch (error) {
     console.error("Send candle failed:", error.message);
@@ -193,6 +276,11 @@ async function run() {
     await ws.connect();
     console.log("WebSocket connected");
 
+    // Continuously check if active symbol changed and resubscribe
+    setInterval(() => {
+      subscribeToActiveSymbol(ws);
+    }, 1000);
+
     ws.on("tick", async (tick) => {
       if (tick && tick.last_traded_price && tick.exchange_timestamp) {
         const candlesToSend = handleTick(tick);
@@ -206,12 +294,27 @@ async function run() {
       }
     });
 
+        // Subscribe using the currently active symbol and its token
+    const activeSymbol = await getActiveSymbol();
+
+    if (!activeSymbol) {
+      console.error("No active symbol found. WebSocket subscription not started.");
+      return;
+    }
+
+    const activeToken = await getTokenForSymbol(activeSymbol);
+
+    if (!activeToken) {
+      console.error("No token found for active symbol:", activeSymbol);
+      return;
+    }
+
     ws.fetchData({
-      correlationID: SYMBOL,
+      correlationID: activeSymbol,
       action: 1,
       mode: 2,
       exchangeType: 2,
-      tokens: ["54518"],
+      tokens: [String(activeToken)],
     });
   } catch (error) {
     console.error("Build candle failed:");

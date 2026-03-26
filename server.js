@@ -15,8 +15,12 @@ app.use(cors());
 const PORT = 2000;
 
 let allOptionRows = [];
-// Store latest market time (will be updated later)
+
+// Store latest market time (updated by build-candle)
 let latestMarketTime = null;
+
+// Store the currently selected symbol for live flow
+let activeSymbol = null;
 
 // Convert Angel scrip master row into frontend watchlist shape
 function toWatchlistItem(item) {
@@ -29,6 +33,30 @@ function toWatchlistItem(item) {
 
 app.get("/", (req, res) => {
   res.send("Angel symbol search server running");
+});
+
+// Return the currently selected active symbol
+app.get("/active-symbol", (req, res) => {
+  res.json({
+    activeSymbol: activeSymbol,
+  });
+});
+// Set the active symbol (called from frontend)
+app.post("/active-symbol", express.json(), (req, res) => {
+  const { symbol } = req.body;
+
+  if (!symbol) {
+    return res.status(400).json({ message: "symbol is required" });
+  }
+
+  activeSymbol = symbol;
+
+  console.log("Active symbol updated:", activeSymbol);
+
+  res.json({
+    message: "active symbol set",
+    activeSymbol,
+  });
 });
 
 // Endpoint to return current market time
@@ -82,11 +110,12 @@ app.get("/prices", (req, res) => {
     .filter(Boolean);
 
   const result = symbols.map((symbol) => {
-    return {
-      symbol,
-      ltp: null,
-    };
-  });
+  return {
+    symbol,
+    ltp: null,
+    isActiveSymbol: symbol === activeSymbol,
+  };
+});
 
   res.json(result);
 });
