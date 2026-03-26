@@ -37,6 +37,23 @@ function getNextMinute(minuteString) {
   return `${year}-${month}-${day} ${hours}:${minutes}`;
 }
 
+// Send latest market time to local API server
+async function sendMarketTime(minute) {
+  try {
+    await fetch("http://localhost:2000/market-time", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        marketTime: minute,
+      }),
+    });
+  } catch (error) {
+    console.error("Send market time failed:", error.message);
+  }
+}
+
 async function sendCandleToStrategy(candle) {
   try {
     const response = await fetch(STRATEGY_URL, {
@@ -74,6 +91,8 @@ function handleTick(tick) {
   const price = rawPrice / 100;
 
   const minute = formatMinute(tick.exchange_timestamp);
+  // Update market time on every tick
+  sendMarketTime(minute);
 
   if (!lastMinute) {
     lastMinute = minute;
