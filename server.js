@@ -4,6 +4,8 @@
 // 2. Load Angel scrip master once on startup
 // 3. Expose /watchlist?q=... for frontend symbol search
 // 4. Expose /prices?symbols=... for frontend LTP polling
+// 5. Store latest live price per symbol from build-candle worker
+// 6. Store full watchlist symbols for multi-symbol LTP subscription
 
 const express = require("express");
 const cors = require("cors");
@@ -11,6 +13,7 @@ const { loadScripMaster, filterNiftyOptions } = require("./loadScripMaster");
 
 const app = express();
 app.use(cors());
+app.use(express.json());
 
 const PORT = 2000;
 
@@ -21,6 +24,24 @@ let latestMarketTime = null;
 
 // Store the currently selected symbol for live flow
 let activeSymbol = null;
+
+// Store full watchlist symbols sent by frontend
+// Example:
+// [
+//   "NIFTY07APR2624500CE",
+//   "NIFTY29DEC2623000PE"
+// ]
+let watchlistSymbols = [];
+
+// Store latest price by symbol
+// Example:
+// {
+//   NIFTY07APR2624500CE: {
+//     ltp: 58.8,
+//     marketTime: "2026-03-26 09:21"
+//   }
+// }
+const latestPricesBySymbol = {};
 
 // Convert Angel scrip master row into frontend watchlist shape
 function toWatchlistItem(item) {
@@ -41,8 +62,9 @@ app.get("/active-symbol", (req, res) => {
     activeSymbol: activeSymbol,
   });
 });
+
 // Set the active symbol (called from frontend)
-app.post("/active-symbol", express.json(), (req, res) => {
+app.post("/active-symbol", (req, res) => {
   const { symbol } = req.body;
 
   if (!symbol) {
@@ -59,6 +81,36 @@ app.post("/active-symbol", express.json(), (req, res) => {
   });
 });
 
+// Return all current watchlist symbols
+app.get("/watchlist-symbols", (req, res) => {
+  res.json({
+    symbols: watchlistSymbols,
+  });
+});
+
+// Update full watchlist symbols (called from frontend)
+// Frontend should send the entire current watchlist after add/remove
+app.post("/watchlist-symbols", (req, res) => {
+  const { symbols } = req.body;
+
+  if (!Array.isArray(symbols)) {
+    return res.status(400).json({
+      message: "symbols must be an array",
+    });
+  }
+
+  watchlistSymbols = symbols
+    .map((symbol) => String(symbol).trim())
+    .filter(Boolean);
+
+  console.log("Watchlist symbols updated:", watchlistSymbols);
+
+  res.json({
+    message: "watchlist symbols updated",
+    symbols: watchlistSymbols,
+  });
+});
+
 // Endpoint to return current market time
 app.get("/market-time", (req, res) => {
   res.json({
@@ -67,7 +119,7 @@ app.get("/market-time", (req, res) => {
 });
 
 // Endpoint to update market time (called by build-candle)
-app.post("/market-time", express.json(), (req, res) => {
+app.post("/market-time", (req, res) => {
   const { marketTime } = req.body;
 
   if (!marketTime) {
@@ -77,6 +129,30 @@ app.post("/market-time", express.json(), (req, res) => {
   latestMarketTime = marketTime;
 
   res.json({ message: "market time updated" });
+});
+
+// Endpoint to receive latest live price from build-candle
+app.post("/price-update", (req, res) => {
+  const { symbol, ltp, marketTime } = req.body;
+
+  if (!symbol) {
+    return res.status(400).json({ message: "symbol is required" });
+  }
+
+  if (ltp === undefined || ltp === null) {
+    return res.status(400).json({ message: "ltp is required" });
+  }
+
+  latestPricesBySymbol[symbol] = {
+    ltp: Number(ltp),
+    marketTime: marketTime || latestMarketTime,
+  };
+
+  res.json({
+    message: "price updated",
+    symbol,
+    price: latestPricesBySymbol[symbol],
+  });
 });
 
 // Search symbols for watchlist dropdown
@@ -96,7 +172,8 @@ app.get("/watchlist", (req, res) => {
 });
 
 // Return prices for requested symbols
-// For now, we return ltp: null until live price lookup is added
+// This compares each requested symbol against latestPricesBySymbol
+// so multiple watchlist rows can each get their own LTP
 app.get("/prices", (req, res) => {
   const rawSymbols = (req.query.symbols || "").toString().trim();
 
@@ -110,12 +187,15 @@ app.get("/prices", (req, res) => {
     .filter(Boolean);
 
   const result = symbols.map((symbol) => {
-  return {
-    symbol,
-    ltp: null,
-    isActiveSymbol: symbol === activeSymbol,
-  };
-});
+    const priceInfo = latestPricesBySymbol[symbol];
+
+    return {
+      symbol,
+      ltp: priceInfo ? priceInfo.ltp : null,
+      marketTime: priceInfo ? priceInfo.marketTime : latestMarketTime,
+      isActiveSymbol: symbol === activeSymbol,
+    };
+  });
 
   res.json(result);
 });
