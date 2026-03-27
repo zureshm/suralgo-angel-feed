@@ -524,10 +524,11 @@ function handleTick(tick) {
   return candlesToSend;
 }
 
-async function run() {
-  try {
-    await buildSymbolTokenMaps();
+let subscribeIntervalId = null;
+let isReconnecting = false;
 
+async function connectWebSocket() {
+  try {
     const smartApi = new SmartAPI({
       api_key: process.env.ANGEL_API_KEY,
     });
@@ -569,20 +570,57 @@ async function run() {
 
     ws.on("error", (error) => {
       console.error("WebSocket error:", error);
+      scheduleReconnect();
     });
 
     ws.on("close", (data) => {
       console.log("WebSocket closed:", data);
+      scheduleReconnect();
     });
 
     await ws.connect();
     console.log("WebSocket connected");
+    isReconnecting = false;
+
+    // Reset subscription tracking so symbols get re-subscribed on new connection
+    subscribedWatchlistTokens = new Set();
+    currentSubscribedSymbol = null;
+    currentSubscribedToken = null;
 
     await subscribeToSymbols(ws, smartApi);
 
-    setInterval(() => {
+    if (subscribeIntervalId) {
+      clearInterval(subscribeIntervalId);
+    }
+
+    subscribeIntervalId = setInterval(() => {
       subscribeToSymbols(ws, smartApi);
     }, 1000);
+  } catch (error) {
+    console.error("WebSocket connect failed:", error.message || error);
+    scheduleReconnect();
+  }
+}
+
+function scheduleReconnect() {
+  if (isReconnecting) return;
+  isReconnecting = true;
+
+  if (subscribeIntervalId) {
+    clearInterval(subscribeIntervalId);
+    subscribeIntervalId = null;
+  }
+
+  console.log("Reconnecting in 5 seconds...");
+  setTimeout(() => {
+    connectWebSocket();
+  }, 5000);
+}
+
+async function run() {
+  try {
+    await buildSymbolTokenMaps();
+    await connectWebSocket();
   } catch (error) {
     console.error("Build candle failed:");
     console.error(error);
