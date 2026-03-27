@@ -3,6 +3,7 @@ require("dotenv").config();
 const { SmartAPI, WebSocketV2 } = require("smartapi-javascript");
 const { authenticator } = require("otplib");
 const { loadScripMaster } = require("./loadScripMaster");
+const { fetchHistoricalCandles } = require("./fetchHistoricalCandles");
 
 const STRATEGY_URL = "http://localhost:4000/evaluate";
 
@@ -20,6 +21,7 @@ let subscribedWatchlistTokens = new Set();
 // Keep symbol <-> token maps in memory
 let symbolToTokenMap = {};
 let tokenToSymbolMap = {};
+let lastHistoryFetchTimeBySymbol = {};
 
 // Prevent overlapping subscribe calls when interval runs again before previous one finishes
 let isSubscriptionInProgress = false;
@@ -128,7 +130,6 @@ async function sendMarketTime(minute) {
 }
 
 // Send latest live price to local API server
-// This lets port 2000 store LTP per symbol for watchlist polling
 async function sendPriceUpdate(symbol, ltp, marketTime) {
   try {
     if (!symbol) {
@@ -169,6 +170,7 @@ async function sendCandleToStrategy(candle) {
       body: JSON.stringify({
         symbol: activeSymbol,
         candle: candle,
+        mode: "live",
       }),
     });
 
@@ -192,6 +194,51 @@ async function sendCandleToStrategy(candle) {
     );
   } catch (error) {
     console.error("Strategy server unreachable. Candle send skipped.");
+    console.error(error.message);
+  }
+}
+
+async function sendHistoricalCandlesToStrategy(candles) {
+  try {
+    const activeSymbol = await getActiveSymbol();
+
+    if (!activeSymbol) {
+      console.log("No active symbol yet. Skipping history send.");
+      return;
+    }
+
+    const response = await fetch(STRATEGY_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        symbol: activeSymbol,
+        candles: candles,
+        mode: "history",
+      }),
+    });
+
+    let data = null;
+
+    try {
+      data = await response.json();
+    } catch (jsonError) {
+      console.error("Strategy response is not valid JSON (history)");
+      return;
+    }
+
+    if (!response.ok) {
+      console.error(`Strategy engine returned status ${response.status}`);
+      console.error("Strategy error response:", data);
+      return;
+    }
+
+    console.log(
+      `Sent historical candles: ${candles.length} | ${activeSymbol} | signal ${data.signal}`
+    );
+  } catch (error) {
+    console.error("Strategy server unreachable (history).");
     console.error(error.message);
   }
 }
@@ -234,7 +281,7 @@ function extractTickMinute(tick) {
 
 // Subscribe all watchlist symbols for LTP,
 // and also keep active symbol ready for candle building
-async function subscribeToSymbols(ws) {
+async function subscribeToSymbols(ws, smartApi) {
   if (isSubscriptionInProgress) {
     return;
   }
@@ -305,6 +352,60 @@ async function subscribeToSymbols(ws) {
 
     resetCandleStateForNewActiveSymbol();
 
+    try {
+      const nowTime = Date.now();
+      const lastFetchTime = lastHistoryFetchTimeBySymbol[activeSymbol] || 0;
+
+      if (nowTime - lastFetchTime < 5 * 60 * 1000) {
+        console.log("Skipping history fetch due to cooldown for:", activeSymbol);
+      } else {
+        const now = new Date();
+
+        const toDate =
+          now.getFullYear() +
+          "-" +
+          String(now.getMonth() + 1).padStart(2, "0") +
+          "-" +
+          String(now.getDate()).padStart(2, "0") +
+          " " +
+          String(now.getHours()).padStart(2, "0") +
+          ":" +
+          String(now.getMinutes()).padStart(2, "0");
+
+        const from = new Date(now.getTime() - 30 * 60 * 1000);
+
+        const fromDate =
+          from.getFullYear() +
+          "-" +
+          String(from.getMonth() + 1).padStart(2, "0") +
+          "-" +
+          String(from.getDate()).padStart(2, "0") +
+          " " +
+          String(from.getHours()).padStart(2, "0") +
+          ":" +
+          String(from.getMinutes()).padStart(2, "0");
+
+        const historicalCandles = await fetchHistoricalCandles({
+          smartApi,
+          symbolToken: activeToken,
+          fromDate,
+          toDate,
+        });
+
+        console.log("Fetched historical candles:", historicalCandles.length);
+
+        if (historicalCandles.length > 0) {
+          await sendHistoricalCandlesToStrategy(historicalCandles);
+          console.log("Historical candles sent to strategy (batch)");
+          lastHistoryFetchTimeBySymbol[activeSymbol] = Date.now();
+        } else {
+          console.log("Skipping history send because no historical candles were fetched");
+        }
+      }
+    } catch (error) {
+      console.error("Historical load failed:", error.message);
+    }
+
     if (!subscribedWatchlistTokens.has(currentSubscribedToken)) {
       try {
         const result = await ws.fetchData({
@@ -347,13 +448,6 @@ function handleTick(tick) {
   sendMarketTime(minute);
   sendPriceUpdate(tickSymbol, price, minute);
 
-  console.log("Mapped tick:", {
-    token: tickToken,
-    symbol: tickSymbol,
-    ltp: price,
-    minute,
-  });
-
   if (!tickSymbol || tickSymbol !== currentSubscribedSymbol) {
     return [];
   }
@@ -384,7 +478,6 @@ function handleTick(tick) {
 
     currentCandle.close = price;
 
-    console.log("Updating candle:", currentCandle);
     return [];
   }
 
@@ -462,8 +555,6 @@ async function run() {
         return;
       }
 
-      console.log("RAW EVENT:", JSON.stringify(tick));
-
       if (tick && tick.last_traded_price && tick.exchange_timestamp) {
         const candlesToSend = handleTick(tick);
 
@@ -487,10 +578,10 @@ async function run() {
     await ws.connect();
     console.log("WebSocket connected");
 
-    await subscribeToSymbols(ws);
+    await subscribeToSymbols(ws, smartApi);
 
     setInterval(() => {
-      subscribeToSymbols(ws);
+      subscribeToSymbols(ws, smartApi);
     }, 1000);
   } catch (error) {
     console.error("Build candle failed:");
