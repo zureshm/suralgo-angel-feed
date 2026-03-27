@@ -30,7 +30,6 @@ function formatMinute(timestamp) {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
-
   const hours = String(date.getHours()).padStart(2, "0");
   const minutes = String(date.getMinutes()).padStart(2, "0");
 
@@ -111,104 +110,6 @@ function getTokenForSymbol(symbol) {
   return token;
 }
 
-// Subscribe all watchlist symbols for LTP,
-// and also keep active symbol ready for candle building
-async function subscribeToSymbols(ws) {
-  // If one subscribe process is already running, skip this interval turn
-  if (isSubscriptionInProgress) {
-    return;
-  }
-
-  isSubscriptionInProgress = true;
-
-  try {
-    const activeSymbol = await getActiveSymbol();
-    const watchlistSymbols = await getWatchlistSymbols();
-
-    // Subscribe any new watchlist symbols for LTP updates
-    const watchlistTokensToAdd = [];
-
-    for (const symbol of watchlistSymbols) {
-      const token = getTokenForSymbol(symbol);
-
-      if (!token) {
-        continue;
-      }
-
-      if (!subscribedWatchlistTokens.has(token)) {
-        watchlistTokensToAdd.push(token);
-      }
-    }
-
-    if (watchlistTokensToAdd.length > 0) {
-      console.log("Subscribing watchlist tokens:", watchlistTokensToAdd);
-
-      ws.fetchData({
-        correlationID: "watchlist-ltp",
-        action: 1,
-        mode: 2,
-        exchangeType: 2,
-        tokens: watchlistTokensToAdd,
-      });
-
-      watchlistTokensToAdd.forEach((token) => {
-        subscribedWatchlistTokens.add(token);
-      });
-
-      console.log("Watchlist LTP subscription request sent");
-    }
-
-    // No active symbol selected yet from frontend
-    if (!activeSymbol) {
-      return;
-    }
-
-    // Same active symbol is already set for candle building
-    if (activeSymbol === currentSubscribedSymbol) {
-      return;
-    }
-
-    const activeToken = getTokenForSymbol(activeSymbol);
-
-    if (!activeToken) {
-      console.error("No token found for active symbol:", activeSymbol);
-      return;
-    }
-
-    console.log("New active symbol detected:", activeSymbol);
-
-    currentSubscribedSymbol = activeSymbol;
-    currentSubscribedToken = String(activeToken);
-
-    // Reset candle state when active symbol changes
-    currentCandle = null;
-    lastMinute = null;
-    completedCandles = [];
-
-    // If active symbol token was not yet part of watchlist subscription,
-    // subscribe it also so ticks definitely arrive
-    if (!subscribedWatchlistTokens.has(currentSubscribedToken)) {
-      ws.fetchData({
-        correlationID: currentSubscribedSymbol,
-        action: 1,
-        mode: 2,
-        exchangeType: 2,
-        tokens: [currentSubscribedToken],
-      });
-
-      subscribedWatchlistTokens.add(currentSubscribedToken);
-    }
-
-    console.log("Active symbol ready for candle building:", currentSubscribedSymbol);
-    console.log("Using token:", currentSubscribedToken);
-  } catch (error) {
-    console.error("Subscribe to symbols failed:", error.message);
-  } finally {
-    // Release lock so next interval can run
-    isSubscriptionInProgress = false;
-  }
-}
-
 // Send latest market time to local API server
 async function sendMarketTime(minute) {
   try {
@@ -255,8 +156,6 @@ async function sendCandleToStrategy(candle) {
   try {
     const activeSymbol = await getActiveSymbol();
 
-    // Frontend has not selected symbol yet.
-    // So do not send candle to strategy.
     if (!activeSymbol) {
       console.log("No active symbol yet. Skipping candle send.");
       return;
@@ -292,28 +191,169 @@ async function sendCandleToStrategy(candle) {
       `Sent candle to strategy: ${candle.time} | ${activeSymbol} | signal ${data.signal}`
     );
   } catch (error) {
-    // Strategy server may be down or not started yet.
-    // Worker must continue running and try again on next candle.
     console.error("Strategy server unreachable. Candle send skipped.");
     console.error(error.message);
   }
 }
 
-function handleTick(tick) {
-  const rawPrice = Number(tick.last_traded_price);
-  const price = rawPrice / 100;
+function resetCandleStateForNewActiveSymbol() {
+  currentCandle = null;
+  lastMinute = null;
+  completedCandles = [];
+}
 
-  const minute = formatMinute(tick.exchange_timestamp);
-  const tickToken = String(tick.token || "");
+function extractTickToken(tick) {
+  const rawToken = String(
+    tick.token ||
+      tick.symboltoken ||
+      tick.symbolToken ||
+      tick.tk ||
+      ""
+  );
+
+  return rawToken.replace(/"/g, "").trim();
+}
+
+function extractTickPrice(tick) {
+  const rawPrice = Number(tick.last_traded_price);
+
+  if (!Number.isFinite(rawPrice)) {
+    return null;
+  }
+
+  return rawPrice / 100;
+}
+
+function extractTickMinute(tick) {
+  if (!tick.exchange_timestamp) {
+    return null;
+  }
+
+  return formatMinute(tick.exchange_timestamp);
+}
+
+// Subscribe all watchlist symbols for LTP,
+// and also keep active symbol ready for candle building
+async function subscribeToSymbols(ws) {
+  if (isSubscriptionInProgress) {
+    return;
+  }
+
+  isSubscriptionInProgress = true;
+
+  try {
+    const activeSymbol = await getActiveSymbol();
+    const watchlistSymbols = await getWatchlistSymbols();
+
+    const watchlistTokensToAdd = [];
+
+    for (const symbol of watchlistSymbols) {
+      const token = getTokenForSymbol(symbol);
+
+      if (!token) {
+        continue;
+      }
+
+      if (!subscribedWatchlistTokens.has(token)) {
+        watchlistTokensToAdd.push(token);
+      }
+    }
+
+    if (watchlistTokensToAdd.length > 0) {
+      console.log("Subscribing watchlist tokens:", watchlistTokensToAdd);
+
+      try {
+        const result = await ws.fetchData({
+          correlationID: "watchlist-ltp",
+          action: 1,
+          mode: 1,
+          exchangeType: 2,
+          tokens: watchlistTokensToAdd,
+        });
+
+        console.log("Watchlist subscription result:", result);
+
+        watchlistTokensToAdd.forEach((token) => {
+          subscribedWatchlistTokens.add(token);
+        });
+
+        console.log("Watchlist LTP subscription success");
+      } catch (error) {
+        console.error("Watchlist subscription failed:", error.message);
+      }
+    }
+
+    if (!activeSymbol) {
+      return;
+    }
+
+    if (activeSymbol === currentSubscribedSymbol) {
+      return;
+    }
+
+    const activeToken = getTokenForSymbol(activeSymbol);
+
+    if (!activeToken) {
+      console.error("No token found for active symbol:", activeSymbol);
+      return;
+    }
+
+    console.log("New active symbol detected:", activeSymbol);
+
+    currentSubscribedSymbol = activeSymbol;
+    currentSubscribedToken = String(activeToken);
+
+    resetCandleStateForNewActiveSymbol();
+
+    if (!subscribedWatchlistTokens.has(currentSubscribedToken)) {
+      try {
+        const result = await ws.fetchData({
+          correlationID: currentSubscribedSymbol,
+          action: 1,
+          mode: 1,
+          exchangeType: 2,
+          tokens: [currentSubscribedToken],
+        });
+
+        console.log("Active symbol subscription result:", result);
+
+        subscribedWatchlistTokens.add(currentSubscribedToken);
+        console.log("Active symbol subscription success:", currentSubscribedToken);
+      } catch (error) {
+        console.error("Active symbol subscription failed:", error.message);
+      }
+    }
+
+    console.log("Active symbol ready for candle building:", currentSubscribedSymbol);
+    console.log("Using token:", currentSubscribedToken);
+  } catch (error) {
+    console.error("Subscribe to symbols failed:", error.message);
+  } finally {
+    isSubscriptionInProgress = false;
+  }
+}
+
+function handleTick(tick) {
+  const price = extractTickPrice(tick);
+  const minute = extractTickMinute(tick);
+  const tickToken = extractTickToken(tick);
   const tickSymbol = tokenToSymbolMap[tickToken] || null;
 
-  // Update market time on every tick
-  sendMarketTime(minute);
+  if (!price || !minute) {
+    console.log("Tick ignored due to missing price/time:", tick);
+    return [];
+  }
 
-  // Update latest live price for whichever symbol produced this tick
+  sendMarketTime(minute);
   sendPriceUpdate(tickSymbol, price, minute);
 
-  // Only build candles for the current active symbol
+  console.log("Mapped tick:", {
+    token: tickToken,
+    symbol: tickSymbol,
+    ltp: price,
+    minute,
+  });
+
   if (!tickSymbol || tickSymbol !== currentSubscribedSymbol) {
     return [];
   }
@@ -393,7 +433,6 @@ function handleTick(tick) {
 
 async function run() {
   try {
-    // Build symbol/token maps once at startup
     await buildSymbolTokenMaps();
 
     const smartApi = new SmartAPI({
@@ -417,15 +456,14 @@ async function run() {
       feedtype: session.data.feedToken,
     });
 
-    await ws.connect();
-    console.log("WebSocket connected");
-
-    // Keep worker alive and keep checking for symbol/watchlist from frontend.
-    setInterval(() => {
-      subscribeToSymbols(ws);
-    }, 1000);
-
     ws.on("tick", async (tick) => {
+      if (tick === "pong") {
+        console.log("Heartbeat pong");
+        return;
+      }
+
+      console.log("RAW EVENT:", JSON.stringify(tick));
+
       if (tick && tick.last_traded_price && tick.exchange_timestamp) {
         const candlesToSend = handleTick(tick);
 
@@ -434,9 +472,26 @@ async function run() {
           await sendCandleToStrategy(candle);
         }
       } else {
-        console.log("Other message:", tick);
+        console.log("Unhandled event shape:", tick);
       }
     });
+
+    ws.on("error", (error) => {
+      console.error("WebSocket error:", error);
+    });
+
+    ws.on("close", (data) => {
+      console.log("WebSocket closed:", data);
+    });
+
+    await ws.connect();
+    console.log("WebSocket connected");
+
+    await subscribeToSymbols(ws);
+
+    setInterval(() => {
+      subscribeToSymbols(ws);
+    }, 1000);
   } catch (error) {
     console.error("Build candle failed:");
     console.error(error);
