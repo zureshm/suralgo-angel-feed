@@ -347,7 +347,6 @@ async function subscribeToSymbols(ws, smartApi) {
 
     console.log("New active symbol detected:", activeSymbol);
 
-    currentSubscribedSymbol = activeSymbol;
     currentSubscribedToken = String(activeToken);
 
     resetCandleStateForNewActiveSymbol();
@@ -359,52 +358,72 @@ async function subscribeToSymbols(ws, smartApi) {
       if (nowTime - lastFetchTime < 5 * 60 * 1000) {
         console.log("Skipping history fetch due to cooldown for:", activeSymbol);
       } else {
-        const now = new Date();
+        const retryDelays = [0, 2000, 5000, 10000];
+        let historicalCandles = [];
+        let fetchSuccess = false;
 
-        const toDate =
-          now.getFullYear() +
-          "-" +
-          String(now.getMonth() + 1).padStart(2, "0") +
-          "-" +
-          String(now.getDate()).padStart(2, "0") +
-          " " +
-          String(now.getHours()).padStart(2, "0") +
-          ":" +
-          String(now.getMinutes()).padStart(2, "0");
+        for (let attempt = 0; attempt < retryDelays.length; attempt++) {
+          if (retryDelays[attempt] > 0) {
+            console.log(`History fetch retry ${attempt}/${retryDelays.length - 1} in ${retryDelays[attempt] / 1000}s...`);
+            await new Promise((resolve) => setTimeout(resolve, retryDelays[attempt]));
+          }
 
-        const from = new Date(now.getTime() - 30 * 60 * 1000);
+          const now = new Date();
 
-        const fromDate =
-          from.getFullYear() +
-          "-" +
-          String(from.getMonth() + 1).padStart(2, "0") +
-          "-" +
-          String(from.getDate()).padStart(2, "0") +
-          " " +
-          String(from.getHours()).padStart(2, "0") +
-          ":" +
-          String(from.getMinutes()).padStart(2, "0");
+          const toDate =
+            now.getFullYear() +
+            "-" +
+            String(now.getMonth() + 1).padStart(2, "0") +
+            "-" +
+            String(now.getDate()).padStart(2, "0") +
+            " " +
+            String(now.getHours()).padStart(2, "0") +
+            ":" +
+            String(now.getMinutes()).padStart(2, "0");
 
-        const historicalCandles = await fetchHistoricalCandles({
-          smartApi,
-          symbolToken: activeToken,
-          fromDate,
-          toDate,
-        });
+          const from = new Date(now.getTime() - 30 * 60 * 1000);
+
+          const fromDate =
+            from.getFullYear() +
+            "-" +
+            String(from.getMonth() + 1).padStart(2, "0") +
+            "-" +
+            String(from.getDate()).padStart(2, "0") +
+            " " +
+            String(from.getHours()).padStart(2, "0") +
+            ":" +
+            String(from.getMinutes()).padStart(2, "0");
+
+          historicalCandles = await fetchHistoricalCandles({
+            smartApi,
+            symbolToken: activeToken,
+            fromDate,
+            toDate,
+          });
+
+          if (historicalCandles.length > 0) {
+            fetchSuccess = true;
+            break;
+          }
+
+          console.log(`History fetch attempt ${attempt + 1} returned 0 candles`);
+        }
 
         console.log("Fetched historical candles:", historicalCandles.length);
 
-        if (historicalCandles.length > 0) {
+        if (fetchSuccess && historicalCandles.length > 0) {
           await sendHistoricalCandlesToStrategy(historicalCandles);
           console.log("Historical candles sent to strategy (batch)");
           lastHistoryFetchTimeBySymbol[activeSymbol] = Date.now();
         } else {
-          console.log("Skipping history send because no historical candles were fetched");
+          console.log("All history fetch attempts failed or returned 0 candles");
         }
       }
     } catch (error) {
       console.error("Historical load failed:", error.message);
     }
+
+    currentSubscribedSymbol = activeSymbol;
 
     if (!subscribedWatchlistTokens.has(currentSubscribedToken)) {
       try {
