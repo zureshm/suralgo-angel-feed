@@ -355,7 +355,7 @@ async function subscribeToSymbols(ws, smartApi) {
       const nowTime = Date.now();
       const lastFetchTime = lastHistoryFetchTimeBySymbol[activeSymbol] || 0;
 
-      if (nowTime - lastFetchTime < 5 * 60 * 1000) {
+      if (nowTime - lastFetchTime < 30 * 1000) {
         console.log("Skipping history fetch due to cooldown for:", activeSymbol);
       } else {
         const retryDelays = [0, 2000, 5000, 10000];
@@ -381,7 +381,7 @@ async function subscribeToSymbols(ws, smartApi) {
             ":" +
             String(now.getMinutes()).padStart(2, "0");
 
-          const from = new Date(now.getTime() - 30 * 60 * 1000);
+          const from = new Date(now.getTime() - 5 * 24 * 60 * 60 * 1000);
 
           const fromDate =
             from.getFullYear() +
@@ -412,6 +412,7 @@ async function subscribeToSymbols(ws, smartApi) {
         console.log("Fetched historical candles:", historicalCandles.length);
 
         if (fetchSuccess && historicalCandles.length > 0) {
+          historicalCandles = historicalCandles.slice(-150);
           await sendHistoricalCandlesToStrategy(historicalCandles);
           console.log("Historical candles sent to strategy (batch)");
           lastHistoryFetchTimeBySymbol[activeSymbol] = Date.now();
