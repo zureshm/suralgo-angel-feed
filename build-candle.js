@@ -358,7 +358,7 @@ async function subscribeToSymbols(ws, smartApi) {
       if (nowTime - lastFetchTime < 30 * 1000) {
         console.log("Skipping history fetch due to cooldown for:", activeSymbol);
       } else {
-        const retryDelays = [0, 2000, 5000, 10000];
+        const retryDelays = [0, 10000, 10000, 10000];
         let historicalCandles = [];
         let fetchSuccess = false;
 
