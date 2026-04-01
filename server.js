@@ -22,8 +22,12 @@ let allOptionRows = [];
 // Store latest market time (updated by build-candle)
 let latestMarketTime = null;
 
-// Store the currently selected symbol for live flow
+// Store the currently selected symbol for live flow (DEPRECATED — use activeStrategySymbols)
 let activeSymbol = null;
+
+// Active strategy symbols (max 2 simultaneous, e.g. one CE + one PE)
+let activeStrategySymbols = [];
+const MAX_ACTIVE_STRATEGY_SYMBOLS = 2;
 
 // Store full watchlist symbols sent by frontend
 // Example:
@@ -56,14 +60,14 @@ app.get("/", (req, res) => {
   res.send("Angel symbol search server running");
 });
 
-// Return the currently selected active symbol
+// Return the currently selected active symbol (DEPRECATED — use /active-strategy-symbols)
 app.get("/active-symbol", (req, res) => {
   res.json({
     activeSymbol: activeSymbol,
   });
 });
 
-// Set the active symbol (called from frontend)
+// Set the active symbol (DEPRECATED — use /active-strategy-symbols)
 app.post("/active-symbol", (req, res) => {
   const { symbol } = req.body;
 
@@ -78,6 +82,74 @@ app.post("/active-symbol", (req, res) => {
   res.json({
     message: "active symbol set",
     activeSymbol,
+  });
+});
+
+// ---- Active Strategy Symbols (max 2) ----
+
+// Return the active strategy symbols array
+app.get("/active-strategy-symbols", (req, res) => {
+  res.json({
+    symbols: activeStrategySymbols,
+  });
+});
+
+// Add a symbol to active strategy symbols (max 2)
+app.post("/active-strategy-symbols", (req, res) => {
+  const { symbol } = req.body;
+
+  if (!symbol) {
+    return res.status(400).json({ message: "symbol is required" });
+  }
+
+  // Already present
+  if (activeStrategySymbols.includes(symbol)) {
+    return res.json({
+      message: "symbol already active",
+      symbols: activeStrategySymbols,
+    });
+  }
+
+  if (activeStrategySymbols.length >= MAX_ACTIVE_STRATEGY_SYMBOLS) {
+    return res.status(400).json({
+      message: `max ${MAX_ACTIVE_STRATEGY_SYMBOLS} active strategy symbols allowed`,
+      symbols: activeStrategySymbols,
+    });
+  }
+
+  activeStrategySymbols.push(symbol);
+
+  // Keep legacy activeSymbol in sync (last added)
+  activeSymbol = symbol;
+
+  console.log("Active strategy symbols updated:", activeStrategySymbols);
+
+  res.json({
+    message: "symbol added",
+    symbols: activeStrategySymbols,
+  });
+});
+
+// Remove a symbol from active strategy symbols
+app.delete("/active-strategy-symbols", (req, res) => {
+  const { symbol } = req.body;
+
+  if (!symbol) {
+    return res.status(400).json({ message: "symbol is required" });
+  }
+
+  activeStrategySymbols = activeStrategySymbols.filter((s) => s !== symbol);
+
+  // Keep legacy activeSymbol in sync
+  if (activeSymbol === symbol) {
+    activeSymbol = activeStrategySymbols[0] || null;
+  }
+
+  console.log("Active strategy symbols updated:", activeStrategySymbols);
+
+  res.json({
+    message: "symbol removed",
+    symbols: activeStrategySymbols,
   });
 });
 
@@ -193,7 +265,7 @@ app.get("/prices", (req, res) => {
       symbol,
       ltp: priceInfo ? priceInfo.ltp : null,
       marketTime: priceInfo ? priceInfo.marketTime : latestMarketTime,
-      isActiveSymbol: symbol === activeSymbol,
+      isActiveSymbol: activeStrategySymbols.includes(symbol),
     };
   });
 
