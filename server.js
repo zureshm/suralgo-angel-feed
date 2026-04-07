@@ -175,6 +175,17 @@ app.post("/watchlist-symbols", (req, res) => {
     .map((symbol) => String(symbol).trim())
     .filter(Boolean);
 
+  // Auto-remove active strategy symbols no longer in the watchlist
+  const removed = activeStrategySymbols.filter((s) => !watchlistSymbols.includes(s));
+  if (removed.length > 0) {
+    activeStrategySymbols = activeStrategySymbols.filter((s) => watchlistSymbols.includes(s));
+    if (activeSymbol && !watchlistSymbols.includes(activeSymbol)) {
+      activeSymbol = activeStrategySymbols[0] || null;
+    }
+    console.log("Auto-removed strategy symbols not in watchlist:", removed);
+    console.log("Active strategy symbols now:", activeStrategySymbols);
+  }
+
   console.log("Watchlist symbols updated:", watchlistSymbols);
 
   res.json({
