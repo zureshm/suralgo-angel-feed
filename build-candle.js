@@ -26,6 +26,8 @@ let subscribedWatchlistTokens = new Set();
 let symbolToTokenMap = {};
 let tokenToSymbolMap = {};
 let lastHistoryFetchTimeBySymbol = {};
+let lastSymbolTokenMapRefresh = 0;
+let failedSymbolCooldown = {};
 
 // Prevent overlapping subscribe calls when interval runs again before previous one finishes
 let isSubscriptionInProgress = false;
@@ -56,10 +58,13 @@ function getNextMinute(minuteString) {
   return `${year}-${month}-${day} ${hours}:${minutes}`;
 }
 
-// Load scrip master once and build fast lookup maps
+// Load scrip master and build fast lookup maps
 async function buildSymbolTokenMaps() {
   try {
     const rows = await loadScripMaster();
+
+    symbolToTokenMap = {};
+    tokenToSymbolMap = {};
 
     rows.forEach((item) => {
       const symbol = item.symbol;
@@ -69,9 +74,19 @@ async function buildSymbolTokenMaps() {
       tokenToSymbolMap[token] = symbol;
     });
 
+    lastSymbolTokenMapRefresh = Date.now();
     console.log("Symbol-token maps ready");
   } catch (error) {
     console.error("Build symbol-token maps failed:", error.message);
+  }
+}
+
+// Refresh maps if stale (older than 5 minutes)
+async function refreshSymbolTokenMapsIfNeeded() {
+  const REFRESH_INTERVAL = 5 * 60 * 1000;
+  if (Date.now() - lastSymbolTokenMapRefresh > REFRESH_INTERVAL) {
+    console.log("Refreshing symbol-token maps (stale)...");
+    await buildSymbolTokenMaps();
   }
 }
 
@@ -296,6 +311,8 @@ async function subscribeToSymbols(ws, smartApi) {
   isSubscriptionInProgress = true;
 
   try {
+    await refreshSymbolTokenMapsIfNeeded();
+
     const activeStrategySymbols = await getActiveStrategySymbols();
     const watchlistSymbols = await getWatchlistSymbols();
 
@@ -356,16 +373,32 @@ async function subscribeToSymbols(ws, smartApi) {
         continue;
       }
 
-      const token = getTokenForSymbol(symbol);
+      let token = getTokenForSymbol(symbol);
 
       if (!token) {
-        console.error("No token found for strategy symbol:", symbol);
+        // Force refresh maps and retry once
+        console.log(`[${symbol}] Token not found, refreshing scrip master...`);
+        await buildSymbolTokenMaps();
+        token = getTokenForSymbol(symbol);
+      }
+
+      if (!token) {
+        console.error("No token found for strategy symbol after refresh:", symbol);
+        failedSymbolCooldown[symbol] = Date.now();
+        continue;
+      }
+
+      // Cooldown for symbols that recently failed (avoid spamming every 1s)
+      const lastFail = failedSymbolCooldown[symbol] || 0;
+      if (Date.now() - lastFail < 30 * 1000) {
         continue;
       }
 
       console.log("New strategy symbol detected:", symbol);
 
       initCandleStateForSymbol(symbol, token);
+
+      let subscriptionSuccess = false;
 
       // Fetch historical candles
       try {
@@ -455,14 +488,26 @@ async function subscribeToSymbols(ws, smartApi) {
           console.log(`[${symbol}] Subscription result:`, result);
 
           subscribedWatchlistTokens.add(String(token));
+          subscriptionSuccess = true;
           console.log(`[${symbol}] Subscription success:`, token);
         } catch (error) {
           console.error(`[${symbol}] Subscription failed:`, error.message);
         }
+      } else {
+        // Token already subscribed via watchlist, reuse it
+        subscriptionSuccess = true;
       }
 
-      subscribedStrategySymbols.add(symbol);
-      console.log(`[${symbol}] Ready for candle building, token:`, token);
+      if (subscriptionSuccess) {
+        delete failedSymbolCooldown[symbol];
+        subscribedStrategySymbols.add(symbol);
+        console.log(`[${symbol}] Ready for candle building, token:`, token);
+      } else {
+        // Clean up so it can be retried on next interval
+        removeCandleStateForSymbol(symbol);
+        failedSymbolCooldown[symbol] = Date.now();
+        console.error(`[${symbol}] Failed to subscribe. Will retry after cooldown.`);
+      }
     }
   } catch (error) {
     console.error("Subscribe to symbols failed:", error.message);
