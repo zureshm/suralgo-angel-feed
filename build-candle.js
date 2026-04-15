@@ -429,7 +429,7 @@ async function subscribeToSymbols(ws, smartApi) {
           console.log(`[${symbol}] Fetched historical candles:`, historicalCandles.length);
 
           if (fetchSuccess && historicalCandles.length > 0) {
-            historicalCandles = historicalCandles.slice(-150);
+            historicalCandles = historicalCandles.slice(-500);
             await sendHistoricalCandlesToStrategy(symbol, historicalCandles);
             console.log(`[${symbol}] Historical candles sent to strategy (batch)`);
             lastHistoryFetchTimeBySymbol[symbol] = Date.now();
