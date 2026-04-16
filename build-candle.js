@@ -81,9 +81,9 @@ async function buildSymbolTokenMaps() {
   }
 }
 
-// Refresh maps if stale (older than 5 minutes)
+// Refresh maps if stale (older than 6 hours)
 async function refreshSymbolTokenMapsIfNeeded() {
-  const REFRESH_INTERVAL = 5 * 60 * 1000;
+  const REFRESH_INTERVAL = 6 * 60 * 60 * 1000;
   if (Date.now() - lastSymbolTokenMapRefresh > REFRESH_INTERVAL) {
     console.log("Refreshing symbol-token maps (stale)...");
     await buildSymbolTokenMaps();

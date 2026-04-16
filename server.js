@@ -283,6 +283,18 @@ app.get("/prices", (req, res) => {
   res.json(result);
 });
 
+async function refreshScripMaster() {
+  try {
+    console.log("Refreshing Angel scrip master...");
+    const rows = await loadScripMaster();
+    const niftyOptions = filterNiftyOptions(rows);
+    allOptionRows = niftyOptions;
+    console.log("Scrip master refreshed — NIFTY option rows:", allOptionRows.length);
+  } catch (error) {
+    console.error("Scrip master refresh failed:", error.message);
+  }
+}
+
 async function startServer() {
   try {
     console.log("Loading Angel scrip master...");
@@ -294,6 +306,11 @@ async function startServer() {
 
     console.log("Scrip master loaded");
     console.log("NIFTY option rows:", allOptionRows.length);
+
+    // Refresh scrip master every 12 hours
+    const REFRESH_INTERVAL = 12 * 60 * 60 * 1000;
+    setInterval(refreshScripMaster, REFRESH_INTERVAL);
+    console.log("Scrip master auto-refresh scheduled every 12 hours");
 
     app.listen(PORT, () => {
       console.log(`Angel symbol search server running at http://localhost:${PORT}`);
