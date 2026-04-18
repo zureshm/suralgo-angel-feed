@@ -264,6 +264,7 @@ function initCandleStateForSymbol(symbol, token) {
     lastMinute: null,
     completedCandles: [],
     token: String(token),
+    volumeAtCandleStart: null,
   };
 }
 
@@ -291,6 +292,16 @@ function extractTickPrice(tick) {
   }
 
   return rawPrice / 100;
+}
+
+function extractTickCumulativeVolume(tick) {
+  const rawVol = Number(tick.volume_trade_for_the_day);
+
+  if (!Number.isFinite(rawVol) || rawVol < 0) {
+    return null;
+  }
+
+  return rawVol;
 }
 
 function extractTickMinute(tick) {
@@ -339,7 +350,7 @@ async function subscribeToSymbols(ws, smartApi) {
         const result = await ws.fetchData({
           correlationID: "watchlist-ltp",
           action: 1,
-          mode: 1,
+          mode: 2,
           exchangeType: 2,
           tokens: watchlistTokensToAdd,
         });
@@ -480,7 +491,7 @@ async function subscribeToSymbols(ws, smartApi) {
           const result = await ws.fetchData({
             correlationID: symbol,
             action: 1,
-            mode: 1,
+            mode: 2,
             exchangeType: 2,
             tokens: [String(token)],
           });
@@ -537,8 +548,11 @@ function handleTick(tick) {
 
   const state = candleStateBySymbol[tickSymbol];
 
+  const cumulativeVolume = extractTickCumulativeVolume(tick);
+
   if (!state.lastMinute) {
     state.lastMinute = minute;
+    state.volumeAtCandleStart = cumulativeVolume;
 
     state.currentCandle = {
       time: minute,
@@ -546,6 +560,7 @@ function handleTick(tick) {
       high: price,
       low: price,
       close: price,
+      volume: 0,
     };
 
     console.log(`[${tickSymbol}] Started first candle:`, state.currentCandle);
@@ -563,10 +578,18 @@ function handleTick(tick) {
 
     state.currentCandle.close = price;
 
+    if (cumulativeVolume !== null && state.volumeAtCandleStart !== null) {
+      state.currentCandle.volume = cumulativeVolume - state.volumeAtCandleStart;
+    }
+
     return [];
   }
 
   const candlesToSend = [];
+
+  if (cumulativeVolume !== null && state.volumeAtCandleStart !== null) {
+    state.currentCandle.volume = cumulativeVolume - state.volumeAtCandleStart;
+  }
 
   const finishedCandle = { ...state.currentCandle };
   state.completedCandles.push(finishedCandle);
@@ -584,6 +607,7 @@ function handleTick(tick) {
       high: finishedCandle.close,
       low: finishedCandle.close,
       close: finishedCandle.close,
+      volume: 0,
     };
 
     state.completedCandles.push(fillerCandle);
@@ -596,12 +620,15 @@ function handleTick(tick) {
 
   state.lastMinute = minute;
 
+  state.volumeAtCandleStart = cumulativeVolume;
+
   state.currentCandle = {
     time: minute,
     open: price,
     high: price,
     low: price,
     close: price,
+    volume: 0,
   };
 
   console.log(`[${tickSymbol}] Started new candle:`, state.currentCandle);

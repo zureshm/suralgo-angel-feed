@@ -30,6 +30,7 @@ async function fetchHistoricalCandles({
         high: Number(item[2]),
         low: Number(item[3]),
         close: Number(item[4]),
+        volume: Number(item[5]) || 0,
       };
     });
   } catch (error) {
