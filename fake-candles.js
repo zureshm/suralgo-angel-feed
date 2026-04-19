@@ -74,6 +74,7 @@ function parseCSV(filePath) {
       high: Number(parts[2]),
       low: Number(parts[3]),
       close: Number(parts[4]),
+      volume: Number(parts[5]) || 0,
     });
   }
 
@@ -207,7 +208,7 @@ async function run() {
 
       const signal = data ? data.signal : "???";
       console.log(
-        `[${f.symbol}] [${i + 1}/${f.live.length}] ${candle.time} | O:${candle.open} H:${candle.high} L:${candle.low} C:${candle.close} | ${signal}${signalMarker(signal)}`
+        `[${f.symbol}] [${i + 1}/${f.live.length}] ${candle.time} | O:${candle.open} H:${candle.high} L:${candle.low} C:${candle.close} V:${candle.volume} | ${signal}${signalMarker(signal)}`
       );
     }
 
