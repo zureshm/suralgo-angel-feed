@@ -190,6 +190,8 @@ app.post("/watchlist-symbols", (req, res) => {
     });
   }
 
+  const prevSymbols = watchlistSymbols;
+
   watchlistSymbols = symbols
     .map((symbol) => String(symbol).trim())
     .filter(Boolean);
@@ -205,7 +207,9 @@ app.post("/watchlist-symbols", (req, res) => {
     console.log("Active strategy symbols now:", activeStrategySymbols);
   }
 
-  console.log("Watchlist symbols updated:", watchlistSymbols);
+  if (JSON.stringify(prevSymbols) !== JSON.stringify(watchlistSymbols)) {
+    console.log("Watchlist symbols updated:", watchlistSymbols);
+  }
 
   res.json({
     message: "watchlist symbols updated",
