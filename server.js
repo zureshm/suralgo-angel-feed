@@ -15,8 +15,8 @@ const app = express();
 const allowedOrigins = [
   "http://localhost:3000",
   "http://localhost:4200",
-  "https://suralgo-frontend.vercel.app",
-  "https://dummytrade.vercel.app"
+  "http://209.38.126.3:3000",
+  "https://suralgo.duckdns.org"
 ];
 
 app.use(cors({
