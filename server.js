@@ -287,15 +287,18 @@ app.post("/price-update", (req, res) => {
     return res.status(400).json({ message: "ltp is required" });
   }
 
-  latestPricesBySymbol[symbol] = {
+  // Convert to Angel format for consistent storage
+  const angelSymbol = formatSensexSymbolForLookup(String(symbol).trim());
+
+  latestPricesBySymbol[angelSymbol] = {
     ltp: Number(ltp),
     marketTime: marketTime || latestMarketTime,
   };
 
   res.json({
     message: "price updated",
-    symbol,
-    price: latestPricesBySymbol[symbol],
+    symbol: angelSymbol,
+    price: latestPricesBySymbol[angelSymbol],
   });
 });
 
