@@ -56,13 +56,31 @@ function loadScripMaster() {
 }
 
 function filterNiftyOptions(rows) {
+  const now = new Date();
+  const maxExpiry = new Date();
+  maxExpiry.setDate(now.getDate() + 35); // 5 weeks
+
   return rows.filter((item) => {
-    return (
+    // Basic Nifty option filter
+    const isNiftyOption =
       item.exch_seg === "NFO" &&
       item.name === "NIFTY" &&
       item.instrumenttype &&
-      item.instrumenttype.includes("OPT")
-    );
+      item.instrumenttype.includes("OPT");
+
+    if (!isNiftyOption) return false;
+
+    // Parse expiry date (format: "DD-MMM-YYYY" e.g., "29-May-2026")
+    const expiryStr = item.expiry || item.expirydate || item.expiry_date;
+    if (!expiryStr) return false;
+
+    try {
+      const expiryDate = new Date(expiryStr);
+      // Valid if expiry is between now and maxExpiry (5 weeks)
+      return expiryDate >= now && expiryDate <= maxExpiry;
+    } catch {
+      return false;
+    }
   });
 }
 
