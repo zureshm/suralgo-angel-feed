@@ -85,7 +85,6 @@ async function buildSymbolTokenMaps() {
 async function refreshSymbolTokenMapsIfNeeded() {
   const REFRESH_INTERVAL = 6 * 60 * 60 * 1000;
   if (Date.now() - lastSymbolTokenMapRefresh > REFRESH_INTERVAL) {
-    console.log("Refreshing symbol-token maps (stale)...");
     await buildSymbolTokenMaps();
   }
 }
@@ -95,7 +94,7 @@ async function getActiveStrategySymbols() {
   try {
     const response = await fetch("http://localhost:2000/active-strategy-symbols");
     const data = await response.json();
-    return Array.isArray(data.symbols) ? data.symbols : [];
+    return Array.isArray(data.symbols) ? data.symbols.map(s => formatSensexSymbolForLookup(s)) : [];
   } catch (error) {
     console.error("Get active strategy symbols failed:", error.message);
     return [];
@@ -112,7 +111,7 @@ async function getWatchlistSymbols() {
       return [];
     }
 
-    return data.symbols;
+    return data.symbols.map(s => formatSensexSymbolForLookup(s));
   } catch (error) {
     console.error("Get watchlist symbols failed:", error.message);
     return [];
@@ -129,6 +128,29 @@ function getTokenForSymbol(symbol) {
   }
 
   return token;
+}
+
+// Convert Sensex DDMMMYY back to YYMDD format for token lookup (e.g., 07MAY26 -> 26507)
+function formatSensexSymbolForLookup(symbol) {
+  if (!symbol.startsWith("SENSEX")) return symbol;
+
+  const match = symbol.match(/^SENSEX(\d{2})(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)(\d{2})(\d{5})(CE|PE)$/);
+  if (!match) return symbol; // Already in YYMDD format or different format
+
+  const [, day, monthName, year, strike, type] = match;
+  const months = { 'JAN': 1, 'FEB': 2, 'MAR': 3, 'APR': 4, 'MAY': 5, 'JUN': 6,
+                  'JUL': 7, 'AUG': 8, 'SEP': 9, 'OCT': 10, 'NOV': 11, 'DEC': 12 };
+  const month = String(months[monthName]);
+
+  return `SENSEX${year}${month}${day}${strike}${type}`;
+}
+
+// Get exchange type based on symbol (NIFTY=2 for NFO, SENSEX=4 for BFO)
+function getExchangeTypeForSymbol(symbol) {
+  if (symbol.startsWith("SENSEX")) {
+    return 4; // BSE F&O
+  }
+  return 2; // NSE F&O (NIFTY and others)
 }
 
 // Send latest market time to local API server
@@ -346,24 +368,42 @@ async function subscribeToSymbols(ws, smartApi) {
     if (watchlistTokensToAdd.length > 0) {
       console.log("Subscribing watchlist tokens:", watchlistTokensToAdd);
 
-      try {
-        const result = await ws.fetchData({
-          correlationID: "watchlist-ltp",
-          action: 1,
-          mode: 2,
-          exchangeType: 2,
-          tokens: watchlistTokensToAdd,
-        });
+      // Group tokens by exchange type (NFO=2, BFO=4)
+      const tokensByExchange = { 2: [], 4: [] };
+      for (const token of watchlistTokensToAdd) {
+        const symbol = tokenToSymbolMap[token];
+        if (symbol) {
+          const exchangeType = getExchangeTypeForSymbol(symbol);
+          tokensByExchange[exchangeType].push(token);
+        } else {
+          // Default to NFO if symbol not found
+          tokensByExchange[2].push(token);
+        }
+      }
 
-        console.log("Watchlist subscription result:", result);
+      // Subscribe to each exchange separately
+      for (const [exchangeType, tokens] of Object.entries(tokensByExchange)) {
+        if (tokens.length === 0) continue;
 
-        watchlistTokensToAdd.forEach((token) => {
-          subscribedWatchlistTokens.add(token);
-        });
+        try {
+          const result = await ws.fetchData({
+            correlationID: "watchlist-ltp",
+            action: 1,
+            mode: 2,
+            exchangeType: parseInt(exchangeType),
+            tokens: tokens,
+          });
 
-        console.log("Watchlist LTP subscription success");
-      } catch (error) {
-        console.error("Watchlist subscription failed:", error.message);
+          console.log(`Watchlist subscription result (exchange ${exchangeType}):`, result);
+
+          tokens.forEach((token) => {
+            subscribedWatchlistTokens.add(token);
+          });
+
+          console.log(`Watchlist LTP subscription success for exchange ${exchangeType}`);
+        } catch (error) {
+          console.error(`Watchlist subscription failed for exchange ${exchangeType}:`, error.message);
+        }
       }
     }
 
@@ -458,6 +498,7 @@ async function subscribeToSymbols(ws, smartApi) {
             historicalCandles = await fetchHistoricalCandles({
               smartApi,
               symbolToken: token,
+              exchange: symbol.startsWith("SENSEX") ? "BFO" : "NFO",
               fromDate,
               toDate,
             });
@@ -492,7 +533,7 @@ async function subscribeToSymbols(ws, smartApi) {
             correlationID: symbol,
             action: 1,
             mode: 2,
-            exchangeType: 2,
+            exchangeType: getExchangeTypeForSymbol(symbol),
             tokens: [String(token)],
           });
 

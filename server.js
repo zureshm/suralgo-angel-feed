@@ -38,6 +38,38 @@ const PORT = 2000;
 
 let allOptionRows = [];
 
+// Convert Sensex YYMDD to DDMMMYY format for display (e.g., 26507 -> 07MAY26)
+function formatSensexSymbolForDisplay(symbol) {
+  if (!symbol.startsWith("SENSEX")) return symbol;
+
+  const match = symbol.match(/^SENSEX(\d{5})(\d{5})(CE|PE)$/);
+  if (!match) return symbol; // Already in DDMMM format or different format
+
+  const [, datePart, strike, type] = match;
+  const year = datePart.slice(0, 2); // First 2 digits = year
+  const month = parseInt(datePart.slice(2, 3)); // Next 1 digit = month (1-12)
+  const day = datePart.slice(3, 5); // Last 2 digits = day
+  const months = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+  const monthName = months[month - 1];
+
+  return `SENSEX${day}${monthName}${year}${strike}${type}`;
+}
+
+// Convert Sensex DDMMMYY back to YYMDD format for token lookup (e.g., 07MAY26 -> 26507)
+function formatSensexSymbolForLookup(symbol) {
+  if (!symbol.startsWith("SENSEX")) return symbol;
+
+  const match = symbol.match(/^SENSEX(\d{2})(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)(\d{2})(\d{5})(CE|PE)$/);
+  if (!match) return symbol; // Already in YYMDD format or different format
+
+  const [, day, monthName, year, strike, type] = match;
+  const months = { 'JAN': 1, 'FEB': 2, 'MAR': 3, 'APR': 4, 'MAY': 5, 'JUN': 6,
+                  'JUL': 7, 'AUG': 8, 'SEP': 9, 'OCT': 10, 'NOV': 11, 'DEC': 12 };
+  const month = String(months[monthName]);
+
+  return `SENSEX${year}${month}${day}${strike}${type}`;
+}
+
 // Store latest market time (updated by build-candle)
 let latestMarketTime = null;
 
@@ -109,7 +141,7 @@ app.post("/active-symbol", (req, res) => {
 // Return the active strategy symbols array
 app.get("/active-strategy-symbols", (req, res) => {
   res.json({
-    symbols: activeStrategySymbols,
+    symbols: activeStrategySymbols.map(s => formatSensexSymbolForDisplay(s)),
   });
 });
 
@@ -121,8 +153,11 @@ app.post("/active-strategy-symbols", (req, res) => {
     return res.status(400).json({ message: "symbol is required" });
   }
 
+  // Convert to Angel format for lookup
+  const angelSymbol = formatSensexSymbolForLookup(String(symbol).trim());
+
   // Already present
-  if (activeStrategySymbols.includes(symbol)) {
+  if (activeStrategySymbols.includes(angelSymbol)) {
     return res.json({
       message: "symbol already active",
       symbols: activeStrategySymbols,
@@ -136,16 +171,16 @@ app.post("/active-strategy-symbols", (req, res) => {
     });
   }
 
-  activeStrategySymbols.push(symbol);
+  activeStrategySymbols.push(angelSymbol);
 
   // Keep legacy activeSymbol in sync (last added)
-  activeSymbol = symbol;
+  activeSymbol = angelSymbol;
 
   console.log("Active strategy symbols updated:", activeStrategySymbols);
 
   res.json({
     message: "symbol added",
-    symbols: activeStrategySymbols,
+    symbols: activeStrategySymbols.map(s => formatSensexSymbolForDisplay(s)),
   });
 });
 
@@ -157,10 +192,13 @@ app.delete("/active-strategy-symbols", (req, res) => {
     return res.status(400).json({ message: "symbol is required" });
   }
 
-  activeStrategySymbols = activeStrategySymbols.filter((s) => s !== symbol);
+  // Convert to Angel format for lookup
+  const angelSymbol = formatSensexSymbolForLookup(String(symbol).trim());
+
+  activeStrategySymbols = activeStrategySymbols.filter((s) => s !== angelSymbol);
 
   // Keep legacy activeSymbol in sync
-  if (activeSymbol === symbol) {
+  if (activeSymbol === angelSymbol) {
     activeSymbol = activeStrategySymbols[0] || null;
   }
 
@@ -168,14 +206,14 @@ app.delete("/active-strategy-symbols", (req, res) => {
 
   res.json({
     message: "symbol removed",
-    symbols: activeStrategySymbols,
+    symbols: activeStrategySymbols.map(s => formatSensexSymbolForDisplay(s)),
   });
 });
 
 // Return all current watchlist symbols
 app.get("/watchlist-symbols", (req, res) => {
   res.json({
-    symbols: watchlistSymbols,
+    symbols: watchlistSymbols.map(s => formatSensexSymbolForDisplay(s)),
   });
 });
 
@@ -193,7 +231,7 @@ app.post("/watchlist-symbols", (req, res) => {
   const prevSymbols = watchlistSymbols;
 
   watchlistSymbols = symbols
-    .map((symbol) => String(symbol).trim())
+    .map((symbol) => formatSensexSymbolForLookup(String(symbol).trim()))
     .filter(Boolean);
 
   // Auto-remove active strategy symbols no longer in the watchlist
@@ -213,7 +251,7 @@ app.post("/watchlist-symbols", (req, res) => {
 
   res.json({
     message: "watchlist symbols updated",
-    symbols: watchlistSymbols,
+    symbols: watchlistSymbols.map(s => formatSensexSymbolForDisplay(s)),
   });
 });
 
@@ -272,7 +310,11 @@ app.get("/watchlist", (req, res) => {
   const matches = allOptionRows
     .filter((item) => item.symbol && item.symbol.toUpperCase().includes(q))
     .slice(0, 20)
-    .map(toWatchlistItem);
+    .map(toWatchlistItem)
+    .map((item) => ({
+      ...item,
+      symbol: formatSensexSymbolForDisplay(item.symbol),
+    }));
 
   res.json(matches);
 });
@@ -293,13 +335,15 @@ app.get("/prices", (req, res) => {
     .filter(Boolean);
 
   const result = symbols.map((symbol) => {
-    const priceInfo = latestPricesBySymbol[symbol];
+    // Convert display format to Angel format for lookup
+    const angelSymbol = formatSensexSymbolForLookup(symbol);
+    const priceInfo = latestPricesBySymbol[angelSymbol];
 
     return {
       symbol,
       ltp: priceInfo ? priceInfo.ltp : null,
       marketTime: priceInfo ? priceInfo.marketTime : latestMarketTime,
-      isActiveSymbol: activeStrategySymbols.includes(symbol),
+      isActiveSymbol: activeStrategySymbols.includes(angelSymbol),
     };
   });
 

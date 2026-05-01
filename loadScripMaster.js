@@ -61,14 +61,12 @@ function filterNiftyOptions(rows) {
   maxExpiry.setDate(now.getDate() + 35); // 5 weeks
 
   return rows.filter((item) => {
-    // Basic Nifty option filter
-    const isNiftyOption =
-      item.exch_seg === "NFO" &&
-      item.name === "NIFTY" &&
-      item.instrumenttype &&
-      item.instrumenttype.includes("OPT");
+    // Nifty on NFO, Sensex on BFO
+    const isNifty = item.exch_seg === "NFO" && item.name === "NIFTY";
+    const isSensex = item.exch_seg === "BFO" && item.name === "SENSEX";
 
-    if (!isNiftyOption) return false;
+    const isValidIndex = (isNifty || isSensex) && item.instrumenttype === "OPTIDX";
+    if (!isValidIndex) return false;
 
     // Parse expiry date (format: "DD-MMM-YYYY" e.g., "29-May-2026")
     const expiryStr = item.expiry || item.expirydate || item.expiry_date;
