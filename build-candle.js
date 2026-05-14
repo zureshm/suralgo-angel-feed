@@ -495,13 +495,31 @@ async function subscribeToSymbols(ws, smartApi) {
               ":" +
               String(from.getMinutes()).padStart(2, "0");
 
-            historicalCandles = await fetchHistoricalCandles({
+            const fetchResult = await fetchHistoricalCandles({
               smartApi,
               symbolToken: token,
               exchange: symbol.startsWith("SENSEX") ? "BFO" : "NFO",
               fromDate,
               toDate,
             });
+
+            // Handle invalid token — refresh scrip master and get fresh token
+            if (fetchResult && fetchResult.invalidToken) {
+              console.log(`[${symbol}] Invalid token detected, refreshing scrip master...`);
+              await buildSymbolTokenMaps();
+              const newToken = getTokenForSymbol(symbol);
+              if (newToken && newToken !== token) {
+                console.log(`[${symbol}] Token updated: ${token} -> ${newToken}`);
+                token = newToken;
+                // Update candle state with new token
+                if (candleStateBySymbol[symbol]) {
+                  candleStateBySymbol[symbol].token = String(newToken);
+                }
+              }
+              continue; // Retry with new token
+            }
+
+            historicalCandles = Array.isArray(fetchResult) ? fetchResult : [];
 
             if (historicalCandles.length > 0) {
               fetchSuccess = true;

@@ -57,6 +57,7 @@ function loadScripMaster() {
 
 function filterNiftyOptions(rows) {
   const now = new Date();
+  now.setHours(0, 0, 0, 0); // Start of today so expiry-day symbols are included
   const maxExpiry = new Date();
   maxExpiry.setDate(now.getDate() + 35); // 5 weeks
 

@@ -20,6 +20,10 @@ async function fetchHistoricalCandles({
     if (!response || !response.data || !Array.isArray(response.data)) {
         console.log("Historical candle raw response:", response);
       console.log("No historical candles returned");
+      // Signal invalid token so caller can refresh scrip master
+      if (response && response.errorCode === "AG8001") {
+        return { invalidToken: true };
+      }
       return [];
     }
 
