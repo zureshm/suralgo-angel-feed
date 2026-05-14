@@ -56,13 +56,30 @@ function loadScripMaster() {
 }
 
 function filterNiftyOptions(rows) {
+  const now = new Date();
+  now.setHours(0, 0, 0, 0); // Start of today so expiry-day symbols are included
+  const maxExpiry = new Date();
+  maxExpiry.setDate(now.getDate() + 35); // 5 weeks
+
   return rows.filter((item) => {
-    return (
-      item.exch_seg === "NFO" &&
-      item.name === "NIFTY" &&
-      item.instrumenttype &&
-      item.instrumenttype.includes("OPT")
-    );
+    // Nifty on NFO, Sensex on BFO
+    const isNifty = item.exch_seg === "NFO" && item.name === "NIFTY";
+    const isSensex = item.exch_seg === "BFO" && item.name === "SENSEX";
+
+    const isValidIndex = (isNifty || isSensex) && item.instrumenttype === "OPTIDX";
+    if (!isValidIndex) return false;
+
+    // Parse expiry date (format: "DD-MMM-YYYY" e.g., "29-May-2026")
+    const expiryStr = item.expiry || item.expirydate || item.expiry_date;
+    if (!expiryStr) return false;
+
+    try {
+      const expiryDate = new Date(expiryStr);
+      // Valid if expiry is between now and maxExpiry (5 weeks)
+      return expiryDate >= now && expiryDate <= maxExpiry;
+    } catch {
+      return false;
+    }
   });
 }
 
