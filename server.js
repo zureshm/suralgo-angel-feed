@@ -36,6 +36,31 @@ app.use(express.json());
 
 const PORT = 2000;
 
+// ---- Log capture system ----
+const MAX_LOG_LINES = 500;
+const serverLogs = [];
+const candleLogs = [];
+
+function pushLog(buffer, line) {
+  buffer.push(line);
+  if (buffer.length > MAX_LOG_LINES) buffer.shift();
+}
+
+const _origLog = console.log;
+const _origError = console.error;
+
+console.log = (...args) => {
+  _origLog(...args);
+  const line = args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ');
+  pushLog(serverLogs, `[LOG] ${new Date().toLocaleTimeString()} ${line}`);
+};
+
+console.error = (...args) => {
+  _origError(...args);
+  const line = args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ');
+  pushLog(serverLogs, `[ERR] ${new Date().toLocaleTimeString()} ${line}`);
+};
+
 let allOptionRows = [];
 
 // Convert Sensex YYMDD to DDMMMYY format for display (e.g., 26507 -> 07MAY26)
@@ -300,6 +325,26 @@ app.post("/price-update", (req, res) => {
     symbol: angelSymbol,
     price: latestPricesBySymbol[angelSymbol],
   });
+});
+
+// ---- Log API endpoints ----
+
+app.get("/logs/server", (req, res) => {
+  res.json({ logs: serverLogs });
+});
+
+app.get("/logs/candle", (req, res) => {
+  res.json({ logs: candleLogs });
+});
+
+app.post("/logs/candle-push", (req, res) => {
+  const { lines } = req.body;
+  if (Array.isArray(lines)) {
+    for (const line of lines) {
+      pushLog(candleLogs, line);
+    }
+  }
+  res.json({ ok: true });
 });
 
 // Search symbols for watchlist dropdown

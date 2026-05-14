@@ -22,6 +22,35 @@
 const fs = require("fs");
 const path = require("path");
 
+// ---- Log push to server.js (port 2000) ----
+const _fcOrigLog = console.log;
+const _fcOrigError = console.error;
+let _fcLogBatch = [];
+
+function _fcFormatArgs(args) {
+  return args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ');
+}
+
+console.log = (...args) => {
+  _fcOrigLog(...args);
+  _fcLogBatch.push(`[LOG] ${new Date().toLocaleTimeString()} ${_fcFormatArgs(args)}`);
+};
+
+console.error = (...args) => {
+  _fcOrigError(...args);
+  _fcLogBatch.push(`[ERR] ${new Date().toLocaleTimeString()} ${_fcFormatArgs(args)}`);
+};
+
+setInterval(() => {
+  if (_fcLogBatch.length === 0) return;
+  const batch = _fcLogBatch.splice(0);
+  fetch("http://localhost:2000/logs/candle-push", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ lines: batch }),
+  }).catch(() => {});
+}, 2000);
+
 const STRATEGY_URL = "http://localhost:4000/evaluate";
 const FEED_URL = "http://localhost:2000";
 

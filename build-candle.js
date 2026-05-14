@@ -7,6 +7,35 @@ const { fetchHistoricalCandles } = require("./fetchHistoricalCandles");
 
 const STRATEGY_URL = "http://localhost:4000/evaluate";
 
+// ---- Log push to server.js (port 2000) ----
+const _bcOrigLog = console.log;
+const _bcOrigError = console.error;
+let _bcLogBatch = [];
+
+function _bcFormatArgs(args) {
+  return args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ');
+}
+
+console.log = (...args) => {
+  _bcOrigLog(...args);
+  _bcLogBatch.push(`[LOG] ${new Date().toLocaleTimeString()} ${_bcFormatArgs(args)}`);
+};
+
+console.error = (...args) => {
+  _bcOrigError(...args);
+  _bcLogBatch.push(`[ERR] ${new Date().toLocaleTimeString()} ${_bcFormatArgs(args)}`);
+};
+
+setInterval(() => {
+  if (_bcLogBatch.length === 0) return;
+  const batch = _bcLogBatch.splice(0);
+  fetch("http://localhost:2000/logs/candle-push", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ lines: batch }),
+  }).catch(() => {});
+}, 2000);
+
 // Per-symbol candle building state (max 2 active strategy symbols)
 // candleStateBySymbol[symbol] = {
 //   currentCandle: null,
