@@ -126,7 +126,7 @@ async function getActiveStrategySymbols() {
     return Array.isArray(data.symbols) ? data.symbols.map(s => formatSensexSymbolForLookup(s)) : [];
   } catch (error) {
     console.error("Get active strategy symbols failed:", error.message);
-    return [];
+    return null;
   }
 }
 
@@ -376,6 +376,13 @@ async function subscribeToSymbols(ws, smartApi) {
     await refreshSymbolTokenMapsIfNeeded();
 
     const activeStrategySymbols = await getActiveStrategySymbols();
+
+    // If fetch failed, don't touch existing subscriptions
+    if (activeStrategySymbols === null) {
+      console.log("Skipping subscription cycle — active symbols fetch failed");
+      return;
+    }
+
     const watchlistSymbols = await getWatchlistSymbols();
 
     // --- Watchlist LTP subscriptions ---
