@@ -105,7 +105,7 @@ let activeSymbol = null;
 
 // Active strategy symbols (max 2 simultaneous, e.g. one CE + one PE)
 let activeStrategySymbols = [];
-const MAX_ACTIVE_STRATEGY_SYMBOLS = 2;
+const MAX_ACTIVE_STRATEGY_SYMBOLS = 4;
 
 // Store full watchlist symbols sent by frontend
 // Example:
