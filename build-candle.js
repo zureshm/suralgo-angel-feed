@@ -58,6 +58,10 @@ let lastHistoryFetchTimeBySymbol = {};
 let lastSymbolTokenMapRefresh = 0;
 let failedSymbolCooldown = {};
 
+// Track consecutive "absent" polls per symbol before removal (grace period)
+const REMOVAL_GRACE_COUNT = 3;
+let symbolAbsentCount = {};
+
 // Prevent overlapping subscribe calls when interval runs again before previous one finishes
 let isSubscriptionInProgress = false;
 
@@ -443,13 +447,22 @@ async function subscribeToSymbols(ws, smartApi) {
       }
     }
 
-    // --- Remove strategy symbols no longer active ---
+    // --- Remove strategy symbols no longer active (with grace period) ---
 
     for (const sym of subscribedStrategySymbols) {
       if (!activeStrategySymbols.includes(sym)) {
-        console.log("Removing inactive strategy symbol:", sym);
-        removeCandleStateForSymbol(sym);
-        subscribedStrategySymbols.delete(sym);
+        symbolAbsentCount[sym] = (symbolAbsentCount[sym] || 0) + 1;
+        if (symbolAbsentCount[sym] >= REMOVAL_GRACE_COUNT) {
+          console.log("Removing inactive strategy symbol:", sym);
+          removeCandleStateForSymbol(sym);
+          subscribedStrategySymbols.delete(sym);
+          delete symbolAbsentCount[sym];
+        } else {
+          console.log(`[${sym}] Absent from active list (${symbolAbsentCount[sym]}/${REMOVAL_GRACE_COUNT}), waiting...`);
+        }
+      } else {
+        // Reset counter if symbol reappears
+        delete symbolAbsentCount[sym];
       }
     }
 

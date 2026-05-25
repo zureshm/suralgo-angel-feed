@@ -9,6 +9,8 @@
 
 const express = require("express");
 const cors = require("cors");
+const fs = require("fs");
+const path = require("path");
 const { loadScripMaster, filterNiftyOptions } = require("./loadScripMaster");
 
 const app = express();
@@ -104,8 +106,31 @@ let latestMarketTime = null;
 let activeSymbol = null;
 
 // Active strategy symbols (max 2 simultaneous, e.g. one CE + one PE)
-let activeStrategySymbols = [];
+const ACTIVE_SYMBOLS_FILE = path.join(__dirname, "active-symbols.json");
 const MAX_ACTIVE_STRATEGY_SYMBOLS = 4;
+
+function loadActiveSymbolsFromDisk() {
+  try {
+    if (fs.existsSync(ACTIVE_SYMBOLS_FILE)) {
+      const data = JSON.parse(fs.readFileSync(ACTIVE_SYMBOLS_FILE, "utf-8"));
+      return Array.isArray(data) ? data : [];
+    }
+  } catch (e) {
+    console.error("Failed to load active symbols from disk:", e.message);
+  }
+  return [];
+}
+
+function saveActiveSymbolsToDisk() {
+  try {
+    fs.writeFileSync(ACTIVE_SYMBOLS_FILE, JSON.stringify(activeStrategySymbols), "utf-8");
+  } catch (e) {
+    console.error("Failed to save active symbols to disk:", e.message);
+  }
+}
+
+let activeStrategySymbols = loadActiveSymbolsFromDisk();
+console.log("Loaded active strategy symbols from disk:", activeStrategySymbols);
 
 // Store full watchlist symbols sent by frontend
 // Example:
@@ -199,6 +224,7 @@ app.post("/active-strategy-symbols", (req, res) => {
   }
 
   activeStrategySymbols.push(angelSymbol);
+  saveActiveSymbolsToDisk();
 
   // Keep legacy activeSymbol in sync (last added)
   activeSymbol = angelSymbol;
@@ -223,6 +249,7 @@ app.delete("/active-strategy-symbols", (req, res) => {
   const angelSymbol = formatSensexSymbolForLookup(String(symbol).trim());
 
   activeStrategySymbols = activeStrategySymbols.filter((s) => s !== angelSymbol);
+  saveActiveSymbolsToDisk();
 
   // Keep legacy activeSymbol in sync
   if (activeSymbol === angelSymbol) {
