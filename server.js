@@ -132,6 +132,9 @@ function saveActiveSymbolsToDisk() {
 let activeStrategySymbols = loadActiveSymbolsFromDisk();
 console.log("Loaded active strategy symbols from disk:", activeStrategySymbols);
 
+// Queue of symbols explicitly removed by frontend — build-candle.js drains this
+let pendingSymbolRemovals = [];
+
 // Store full watchlist symbols sent by frontend
 // Example:
 // [
@@ -251,6 +254,9 @@ app.delete("/active-strategy-symbols", (req, res) => {
   activeStrategySymbols = activeStrategySymbols.filter((s) => s !== angelSymbol);
   saveActiveSymbolsToDisk();
 
+  // Queue for build-candle.js to pick up
+  pendingSymbolRemovals.push(angelSymbol);
+
   // Keep legacy activeSymbol in sync
   if (activeSymbol === angelSymbol) {
     activeSymbol = activeStrategySymbols[0] || null;
@@ -262,6 +268,12 @@ app.delete("/active-strategy-symbols", (req, res) => {
     message: "symbol removed",
     symbols: activeStrategySymbols.map(s => formatSensexSymbolForDisplay(s)),
   });
+});
+
+// Return and drain pending symbol removals (polled by build-candle.js)
+app.get("/pending-symbol-removals", (req, res) => {
+  const removals = pendingSymbolRemovals.splice(0);
+  res.json({ symbols: removals.map(s => formatSensexSymbolForDisplay(s)) });
 });
 
 // Return all current watchlist symbols

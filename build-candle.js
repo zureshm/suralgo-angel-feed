@@ -58,10 +58,6 @@ let lastHistoryFetchTimeBySymbol = {};
 let lastSymbolTokenMapRefresh = 0;
 let failedSymbolCooldown = {};
 
-// Track consecutive "absent" polls per symbol before removal (grace period)
-const REMOVAL_GRACE_COUNT = 3;
-let symbolAbsentCount = {};
-
 // Prevent overlapping subscribe calls when interval runs again before previous one finishes
 let isSubscriptionInProgress = false;
 
@@ -130,7 +126,18 @@ async function getActiveStrategySymbols() {
     return Array.isArray(data.symbols) ? data.symbols.map(s => formatSensexSymbolForLookup(s)) : [];
   } catch (error) {
     console.error("Get active strategy symbols failed:", error.message);
-    return null;
+    return [];
+  }
+}
+
+// Fetch symbols explicitly removed by frontend (drains the queue)
+async function getPendingRemovals() {
+  try {
+    const response = await fetch("http://localhost:2000/pending-symbol-removals");
+    const data = await response.json();
+    return Array.isArray(data.symbols) ? data.symbols.map(s => formatSensexSymbolForLookup(s)) : [];
+  } catch (error) {
+    return [];
   }
 }
 
@@ -380,13 +387,6 @@ async function subscribeToSymbols(ws, smartApi) {
     await refreshSymbolTokenMapsIfNeeded();
 
     const activeStrategySymbols = await getActiveStrategySymbols();
-
-    // If fetch failed, don't touch existing subscriptions
-    if (activeStrategySymbols === null) {
-      console.log("Skipping subscription cycle — active symbols fetch failed");
-      return;
-    }
-
     const watchlistSymbols = await getWatchlistSymbols();
 
     // --- Watchlist LTP subscriptions ---
@@ -447,22 +447,14 @@ async function subscribeToSymbols(ws, smartApi) {
       }
     }
 
-    // --- Remove strategy symbols no longer active (with grace period) ---
+    // --- Process explicit removals from server queue ---
 
-    for (const sym of subscribedStrategySymbols) {
-      if (!activeStrategySymbols.includes(sym)) {
-        symbolAbsentCount[sym] = (symbolAbsentCount[sym] || 0) + 1;
-        if (symbolAbsentCount[sym] >= REMOVAL_GRACE_COUNT) {
-          console.log("Removing inactive strategy symbol:", sym);
-          removeCandleStateForSymbol(sym);
-          subscribedStrategySymbols.delete(sym);
-          delete symbolAbsentCount[sym];
-        } else {
-          console.log(`[${sym}] Absent from active list (${symbolAbsentCount[sym]}/${REMOVAL_GRACE_COUNT}), waiting...`);
-        }
-      } else {
-        // Reset counter if symbol reappears
-        delete symbolAbsentCount[sym];
+    const pendingRemovals = await getPendingRemovals();
+    for (const sym of pendingRemovals) {
+      if (subscribedStrategySymbols.has(sym)) {
+        console.log("Removing strategy symbol (explicit removal):", sym);
+        removeCandleStateForSymbol(sym);
+        subscribedStrategySymbols.delete(sym);
       }
     }
 
