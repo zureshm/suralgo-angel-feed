@@ -200,6 +200,11 @@ app.get("/active-strategy-symbols", (req, res) => {
   });
 });
 
+// Validate that a symbol looks like a real NIFTY/SENSEX option (e.g. NIFTY26MAY2624000CE)
+function isValidOptionSymbol(sym) {
+  return /^(NIFTY|SENSEX)\d{2}[A-Z]{3}\d{2}\d+[A-Z]{2,3}$/.test(sym);
+}
+
 // Add a symbol to active strategy symbols (max 2)
 app.post("/active-strategy-symbols", (req, res) => {
   const { symbol } = req.body;
@@ -210,6 +215,10 @@ app.post("/active-strategy-symbols", (req, res) => {
 
   // Convert to Angel format for lookup
   const angelSymbol = formatSensexSymbolForLookup(String(symbol).trim());
+
+  if (!isValidOptionSymbol(angelSymbol)) {
+    return res.status(400).json({ message: "invalid symbol format" });
+  }
 
   // Already present
   if (activeStrategySymbols.includes(angelSymbol)) {
