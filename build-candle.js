@@ -45,6 +45,18 @@ setInterval(() => {
 // }
 const candleStateBySymbol = {};
 
+// ---- Nifty50 Index candle tracking (dedicated, always-on) ----
+const NIFTY50_TOKEN = "99926000";
+const NIFTY50_EXCHANGE_TYPE = 1; // NSE
+const NIFTY50_MAX_CANDLES = 700;
+let nifty50State = {
+  currentCandle: null,
+  lastMinute: null,
+  completedCandles: [],
+  subscribed: false,
+  historyLoaded: false,
+};
+
 // Track which strategy symbols are currently subscribed for candle building
 let subscribedStrategySymbols = new Set();
 
@@ -736,6 +748,156 @@ function handleTick(tick) {
   return candlesToSend;
 }
 
+// ---- Nifty50 dedicated candle logic ----
+
+function handleNifty50Tick(tick) {
+  const price = extractTickPrice(tick);
+  const minute = extractTickMinute(tick);
+
+  if (!price || !minute) return;
+
+  if (!nifty50State.lastMinute) {
+    nifty50State.lastMinute = minute;
+    nifty50State.currentCandle = {
+      time: minute,
+      open: price,
+      high: price,
+      low: price,
+      close: price,
+      volume: 0,
+    };
+    console.log("[NIFTY50] Started first candle:", nifty50State.currentCandle);
+    pushNifty50Update();
+    return;
+  }
+
+  if (minute === nifty50State.lastMinute) {
+    if (price > nifty50State.currentCandle.high) nifty50State.currentCandle.high = price;
+    if (price < nifty50State.currentCandle.low) nifty50State.currentCandle.low = price;
+    nifty50State.currentCandle.close = price;
+    pushNifty50Update();
+    return;
+  }
+
+  // Minute changed — finalize current candle
+  const finishedCandle = { ...nifty50State.currentCandle };
+  nifty50State.completedCandles.push(finishedCandle);
+
+  // Fill gaps
+  let nextMinute = getNextMinute(nifty50State.lastMinute);
+  while (nextMinute !== minute) {
+    const fillerCandle = {
+      time: nextMinute,
+      open: finishedCandle.close,
+      high: finishedCandle.close,
+      low: finishedCandle.close,
+      close: finishedCandle.close,
+      volume: 0,
+    };
+    nifty50State.completedCandles.push(fillerCandle);
+    nextMinute = getNextMinute(nextMinute);
+  }
+
+  // Trim to max
+  if (nifty50State.completedCandles.length > NIFTY50_MAX_CANDLES) {
+    nifty50State.completedCandles = nifty50State.completedCandles.slice(-NIFTY50_MAX_CANDLES);
+  }
+
+  nifty50State.lastMinute = minute;
+  nifty50State.currentCandle = {
+    time: minute,
+    open: price,
+    high: price,
+    low: price,
+    close: price,
+    volume: 0,
+  };
+
+  console.log("[NIFTY50] Completed candle:", finishedCandle.time, "| Total:", nifty50State.completedCandles.length);
+  pushNifty50Update();
+}
+
+// Throttle: push at most once per 500ms
+let _nifty50PushTimeout = null;
+function pushNifty50Update() {
+  if (_nifty50PushTimeout) return;
+  _nifty50PushTimeout = setTimeout(() => {
+    _nifty50PushTimeout = null;
+    _doPushNifty50();
+  }, 500);
+}
+
+function _doPushNifty50() {
+  const payload = {
+    completedCandles: nifty50State.completedCandles,
+    currentCandle: nifty50State.currentCandle,
+  };
+  fetch("http://localhost:2000/nifty50-candle-update", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  }).catch(() => {});
+}
+
+async function subscribeNifty50(ws, smartApi) {
+  if (nifty50State.subscribed) return;
+
+  // Fetch historical candles for Nifty50 index
+  if (!nifty50State.historyLoaded) {
+    try {
+      const now = new Date();
+      const toDate =
+        now.getFullYear() + "-" +
+        String(now.getMonth() + 1).padStart(2, "0") + "-" +
+        String(now.getDate()).padStart(2, "0") + " " +
+        String(now.getHours()).padStart(2, "0") + ":" +
+        String(now.getMinutes()).padStart(2, "0");
+
+      const from = new Date(now.getTime() - 5 * 24 * 60 * 60 * 1000);
+      const fromDate =
+        from.getFullYear() + "-" +
+        String(from.getMonth() + 1).padStart(2, "0") + "-" +
+        String(from.getDate()).padStart(2, "0") + " " +
+        String(from.getHours()).padStart(2, "0") + ":" +
+        String(from.getMinutes()).padStart(2, "0");
+
+      const historicalCandles = await fetchHistoricalCandles({
+        smartApi,
+        symbolToken: NIFTY50_TOKEN,
+        exchange: "NSE",
+        fromDate,
+        toDate,
+      });
+
+      if (Array.isArray(historicalCandles) && historicalCandles.length > 0) {
+        nifty50State.completedCandles = historicalCandles.slice(-NIFTY50_MAX_CANDLES);
+        nifty50State.historyLoaded = true;
+        console.log("[NIFTY50] Historical candles loaded:", nifty50State.completedCandles.length);
+        pushNifty50Update();
+      } else {
+        console.log("[NIFTY50] No historical candles returned");
+      }
+    } catch (error) {
+      console.error("[NIFTY50] Historical fetch failed:", error.message);
+    }
+  }
+
+  // Subscribe to Nifty50 tick data
+  try {
+    const result = await ws.fetchData({
+      correlationID: "nifty50-index",
+      action: 1,
+      mode: 2,
+      exchangeType: NIFTY50_EXCHANGE_TYPE,
+      tokens: [NIFTY50_TOKEN],
+    });
+    console.log("[NIFTY50] Subscription result:", result);
+    nifty50State.subscribed = true;
+  } catch (error) {
+    console.error("[NIFTY50] Subscription failed:", error.message);
+  }
+}
+
 let subscribeIntervalId = null;
 let isReconnecting = false;
 
@@ -769,6 +931,13 @@ async function connectWebSocket() {
       }
 
       if (tick && tick.last_traded_price && tick.exchange_timestamp) {
+        // Handle Nifty50 index ticks separately
+        const tickToken = extractTickToken(tick);
+        if (tickToken === NIFTY50_TOKEN) {
+          handleNifty50Tick(tick);
+          return;
+        }
+
         const candlesToSend = handleTick(tick);
 
         for (const { symbol, candle } of candlesToSend) {
@@ -797,9 +966,13 @@ async function connectWebSocket() {
     // Reset subscription tracking so symbols get re-subscribed on new connection
     subscribedWatchlistTokens = new Set();
     subscribedStrategySymbols = new Set();
+    nifty50State.subscribed = false;
     for (const sym in candleStateBySymbol) {
       delete candleStateBySymbol[sym];
     }
+
+    // Subscribe Nifty50 index first (always-on)
+    await subscribeNifty50(ws, smartApi);
 
     await subscribeToSymbols(ws, smartApi);
 

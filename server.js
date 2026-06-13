@@ -6,9 +6,12 @@
 // 4. Expose /prices?symbols=... for frontend LTP polling
 // 5. Store latest live price per symbol from build-candle worker
 // 6. Store full watchlist symbols for multi-symbol LTP subscription
+// 7. WebSocket server for live Nifty50 candle streaming to frontend
 
+const http = require("http");
 const express = require("express");
 const cors = require("cors");
+const { WebSocketServer } = require("ws");
 const { loadScripMaster, filterNiftyOptions } = require("./loadScripMaster");
 
 const app = express();
@@ -371,6 +374,43 @@ app.post("/logs/candle-push", (req, res) => {
   res.json({ ok: true });
 });
 
+// ---- Nifty50 Live Candle WebSocket ----
+
+let nifty50CandleData = {
+  completedCandles: [],
+  currentCandle: null,
+};
+
+// Receive candle updates from build-candle.js
+app.post("/nifty50-candle-update", (req, res) => {
+  const { completedCandles, currentCandle } = req.body;
+  if (Array.isArray(completedCandles)) {
+    nifty50CandleData.completedCandles = completedCandles;
+  }
+  if (currentCandle) {
+    nifty50CandleData.currentCandle = currentCandle;
+  }
+  // Broadcast to all connected WebSocket clients
+  broadcastNifty50();
+  res.json({ ok: true });
+});
+
+// Track connected Nifty50 WebSocket clients
+const nifty50Clients = new Set();
+
+function broadcastNifty50() {
+  const msg = JSON.stringify({
+    type: "update",
+    completedCandles: nifty50CandleData.completedCandles,
+    currentCandle: nifty50CandleData.currentCandle,
+  });
+  for (const client of nifty50Clients) {
+    if (client.readyState === 1) { // WebSocket.OPEN
+      client.send(msg);
+    }
+  }
+}
+
 // Search symbols for watchlist dropdown
 app.get("/watchlist", (req, res) => {
   const q = (req.query.q || "").toString().trim().toUpperCase();
@@ -451,8 +491,36 @@ async function startServer() {
     setInterval(refreshScripMaster, REFRESH_INTERVAL);
     console.log("Scrip master auto-refresh scheduled every 12 hours");
 
-    app.listen(PORT, () => {
+    const server = http.createServer(app);
+
+    // WebSocket server for Nifty50 live chart
+    const wss = new WebSocketServer({ server, path: "/ws/nifty50" });
+
+    wss.on("connection", (ws) => {
+      console.log("[WS] Nifty50 client connected");
+      nifty50Clients.add(ws);
+
+      // Send full snapshot on connect
+      const snapshot = JSON.stringify({
+        type: "snapshot",
+        completedCandles: nifty50CandleData.completedCandles,
+        currentCandle: nifty50CandleData.currentCandle,
+      });
+      ws.send(snapshot);
+
+      ws.on("close", () => {
+        nifty50Clients.delete(ws);
+        console.log("[WS] Nifty50 client disconnected");
+      });
+
+      ws.on("error", () => {
+        nifty50Clients.delete(ws);
+      });
+    });
+
+    server.listen(PORT, () => {
       console.log(`Angel symbol search server running at http://localhost:${PORT}`);
+      console.log(`Nifty50 WebSocket available at ws://localhost:${PORT}/ws/nifty50`);
     });
   } catch (error) {
     console.error("Failed to start symbol server:");
