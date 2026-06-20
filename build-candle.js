@@ -5,6 +5,11 @@ const { authenticator } = require("otplib");
 const { loadScripMaster } = require("./loadScripMaster");
 const { fetchHistoricalCandles } = require("./fetchHistoricalCandles");
 
+// Global smartApi instance for session refresh
+let globalSmartApi = null;
+let globalSession = null;
+let sessionRefreshInterval = null;
+
 const STRATEGY_URL = "http://localhost:4000/evaluate";
 
 // ---- Log push to server.js (port 2000) ----
@@ -549,12 +554,19 @@ async function subscribeToSymbols(ws, smartApi) {
               String(from.getMinutes()).padStart(2, "0");
 
             const fetchResult = await fetchHistoricalCandles({
-              smartApi,
+              smartApi: globalSmartApi,
               symbolToken: token,
               exchange: symbol.startsWith("SENSEX") ? "BFO" : "NFO",
               fromDate,
               toDate,
             });
+
+            // Handle auth error — refresh session and retry
+            if (fetchResult && fetchResult.authError) {
+              console.log(`[${symbol}] Auth error detected, refreshing session...`);
+              await refreshSession();
+              continue; // Retry with fresh session
+            }
 
             // Handle invalid token — refresh scrip master and get fresh token
             if (fetchResult && fetchResult.invalidToken) {
@@ -900,28 +912,59 @@ async function subscribeNifty50(ws, smartApi) {
 
 let subscribeIntervalId = null;
 let isReconnecting = false;
+let isRefreshingSession = false;
+
+async function refreshSession() {
+  if (isRefreshingSession) return;
+  isRefreshingSession = true;
+  console.log("[SESSION] Refreshing Angel One session...");
+  try {
+    const totp = authenticator.generate(process.env.ANGEL_TOTP_SECRET);
+    const session = await globalSmartApi.generateSession(
+      process.env.ANGEL_CLIENT_CODE,
+      process.env.ANGEL_PASSWORD,
+      totp
+    );
+    globalSession = session;
+    console.log("[SESSION] Session refreshed successfully");
+    return session;
+  } catch (error) {
+    console.error("[SESSION] Session refresh failed:", error.message);
+    throw error;
+  } finally {
+    isRefreshingSession = false;
+  }
+}
 
 async function connectWebSocket() {
   try {
-    const smartApi = new SmartAPI({
+    globalSmartApi = new SmartAPI({
       api_key: process.env.ANGEL_API_KEY,
     });
 
     const totp = authenticator.generate(process.env.ANGEL_TOTP_SECRET);
 
-    const session = await smartApi.generateSession(
+    const session = await globalSmartApi.generateSession(
       process.env.ANGEL_CLIENT_CODE,
       process.env.ANGEL_PASSWORD,
       totp
     );
+    globalSession = session;
 
     console.log("Login success");
 
+    // Start periodic session refresh every 12 hours
+    if (sessionRefreshInterval) clearInterval(sessionRefreshInterval);
+    sessionRefreshInterval = setInterval(() => {
+      console.log("[SESSION] Periodic refresh triggered");
+      refreshSession().catch((err) => console.error("[SESSION] Periodic refresh failed:", err.message));
+    }, 12 * 60 * 60 * 1000);
+
     const ws = new WebSocketV2({
       clientcode: process.env.ANGEL_CLIENT_CODE,
-      jwttoken: session.data.jwtToken,
+      jwttoken: globalSession.data.jwtToken,
       apikey: process.env.ANGEL_API_KEY,
-      feedtype: session.data.feedToken,
+      feedtype: globalSession.data.feedToken,
     });
 
     ws.on("tick", async (tick) => {
@@ -972,16 +1015,16 @@ async function connectWebSocket() {
     }
 
     // Subscribe Nifty50 index first (always-on)
-    await subscribeNifty50(ws, smartApi);
+    await subscribeNifty50(ws, globalSmartApi);
 
-    await subscribeToSymbols(ws, smartApi);
+    await subscribeToSymbols(ws, globalSmartApi);
 
     if (subscribeIntervalId) {
       clearInterval(subscribeIntervalId);
     }
 
     subscribeIntervalId = setInterval(() => {
-      subscribeToSymbols(ws, smartApi);
+      subscribeToSymbols(ws, globalSmartApi);
     }, 1000);
   } catch (error) {
     console.error("WebSocket connect failed:", error.message || error);

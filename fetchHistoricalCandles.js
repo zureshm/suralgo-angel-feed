@@ -39,6 +39,10 @@ async function fetchHistoricalCandles({
     });
   } catch (error) {
     console.error("Fetch historical candles failed:", error.message);
+    // Signal auth error to trigger session refresh
+    if (error.message && (error.message.includes("401") || error.message.includes("403") || error.message.includes("Unauthorized") || error.message.includes("Session"))) {
+      return { authError: true };
+    }
     return [];
   }
 }
