@@ -19,6 +19,7 @@ const allowedOrigins = [
   "http://localhost:3000",
   "http://localhost:4200",
   "http://209.38.126.3:3000",
+  "http://209.38.126.3:4200",
   "http://144.126.255.14:3000",
   "http://144.126.255.14:4200",
   "https://suralgo.duckdns.org",
