@@ -540,7 +540,7 @@ async function subscribeToSymbols(ws, smartApi) {
               ":" +
               String(now.getMinutes()).padStart(2, "0");
 
-            const from = new Date(now.getTime() - 5 * 24 * 60 * 60 * 1000);
+            const from = new Date(now.getTime() - 10 * 24 * 60 * 60 * 1000);
 
             const fromDate =
               from.getFullYear() +
@@ -597,7 +597,7 @@ async function subscribeToSymbols(ws, smartApi) {
           console.log(`[${symbol}] Fetched historical candles:`, historicalCandles.length);
 
           if (fetchSuccess && historicalCandles.length > 0) {
-            historicalCandles = historicalCandles.slice(-370);
+            historicalCandles = historicalCandles.slice(-1200);
             await sendHistoricalCandlesToStrategy(symbol, historicalCandles);
             console.log(`[${symbol}] Historical candles sent to strategy (batch)`);
             lastHistoryFetchTimeBySymbol[symbol] = Date.now();
