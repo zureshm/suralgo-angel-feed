@@ -210,6 +210,19 @@ function getExchangeTypeForSymbol(symbol) {
   return 2; // NSE F&O (NIFTY and others)
 }
 
+// Report symbol history fetch status to server.js
+async function reportSymbolHistoryStatus(symbol, status, candleCount = 0) {
+  try {
+    await fetch("http://localhost:2000/symbol-history-status", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ symbol, status, candleCount }),
+    });
+  } catch (error) {
+    // Non-critical — don't block on this
+  }
+}
+
 // Send latest market time to local API server
 async function sendMarketTime(minute) {
   try {
@@ -505,6 +518,9 @@ async function subscribeToSymbols(ws, smartApi) {
 
       console.log("New strategy symbol detected:", symbol);
 
+      // Report loading status to server
+      reportSymbolHistoryStatus(symbol, "loading");
+
       initCandleStateForSymbol(symbol, token);
 
       let subscriptionSuccess = false;
@@ -601,8 +617,10 @@ async function subscribeToSymbols(ws, smartApi) {
             await sendHistoricalCandlesToStrategy(symbol, historicalCandles);
             console.log(`[${symbol}] Historical candles sent to strategy (batch)`);
             lastHistoryFetchTimeBySymbol[symbol] = Date.now();
+            reportSymbolHistoryStatus(symbol, "ready", historicalCandles.length);
           } else {
             console.log(`[${symbol}] All history fetch attempts failed or returned 0 candles`);
+            reportSymbolHistoryStatus(symbol, "failed", 0);
           }
         }
       } catch (error) {
