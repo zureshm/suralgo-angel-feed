@@ -356,6 +356,33 @@ app.post("/price-update", (req, res) => {
   });
 });
 
+// ---- Symbol History Status tracking ----
+// Tracks per-symbol history fetch status: 'loading' | 'ready' | 'failed'
+// Updated by build-candle.js, queried by trade-engine
+const symbolHistoryStatus = {};
+
+// GET status for a specific symbol
+app.get("/symbol-history-status/:symbol", (req, res) => {
+  const symbol = req.params.symbol;
+  const status = symbolHistoryStatus[symbol] || { status: "unknown", candleCount: 0 };
+  res.json(status);
+});
+
+// GET status for all symbols
+app.get("/symbol-history-status", (req, res) => {
+  res.json(symbolHistoryStatus);
+});
+
+// POST to update status (called by build-candle.js)
+app.post("/symbol-history-status", (req, res) => {
+  const { symbol, status, candleCount } = req.body;
+  if (!symbol || !status) {
+    return res.status(400).json({ message: "symbol and status required" });
+  }
+  symbolHistoryStatus[symbol] = { status, candleCount: candleCount || 0, updatedAt: Date.now() };
+  res.json({ ok: true });
+});
+
 // ---- Log API endpoints ----
 
 app.get("/logs/server", (req, res) => {
