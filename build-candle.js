@@ -577,6 +577,13 @@ async function subscribeToSymbols(ws, smartApi) {
               toDate,
             });
 
+            // Handle rate limit error — back off 30s before retry
+            if (fetchResult && fetchResult.rateLimitError) {
+              console.log(`[${symbol}] Rate limit detected, backing off 30s...`);
+              await new Promise((resolve) => setTimeout(resolve, 30000));
+              continue;
+            }
+
             // Handle auth error — refresh session and retry
             if (fetchResult && fetchResult.authError) {
               console.log(`[${symbol}] Auth error detected, refreshing session...`);
@@ -626,6 +633,9 @@ async function subscribeToSymbols(ws, smartApi) {
       } catch (error) {
         console.error(`[${symbol}] Historical load failed:`, error.message);
       }
+
+      // Delay before processing next symbol to avoid hitting API rate limit
+      await new Promise((resolve) => setTimeout(resolve, 1000));
 
       // Subscribe token for tick data if not already subscribed
       if (!subscribedWatchlistTokens.has(String(token))) {

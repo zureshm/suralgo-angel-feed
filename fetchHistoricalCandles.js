@@ -39,6 +39,10 @@ async function fetchHistoricalCandles({
     });
   } catch (error) {
     console.error("Fetch historical candles failed:", error.message);
+    // Signal rate limit error so caller can back off longer
+    if (error.message && (error.message.includes("Access denied") || error.message.includes("AB1021") || error.message.includes("Too many requests"))) {
+      return { rateLimitError: true };
+    }
     // Signal auth error to trigger session refresh
     if (error.message && (error.message.includes("401") || error.message.includes("403") || error.message.includes("Unauthorized") || error.message.includes("Session"))) {
       return { authError: true };
