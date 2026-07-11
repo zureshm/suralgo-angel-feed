@@ -70,38 +70,6 @@ console.error = (...args) => {
 
 let allOptionRows = [];
 
-// Convert Sensex YYMDD to DDMMMYY format for display (e.g., 26507 -> 07MAY26)
-function formatSensexSymbolForDisplay(symbol) {
-  if (!symbol.startsWith("SENSEX")) return symbol;
-
-  const match = symbol.match(/^SENSEX(\d{5})(\d{5})(CE|PE)$/);
-  if (!match) return symbol; // Already in DDMMM format or different format
-
-  const [, datePart, strike, type] = match;
-  const year = datePart.slice(0, 2); // First 2 digits = year
-  const month = parseInt(datePart.slice(2, 3)); // Next 1 digit = month (1-12)
-  const day = datePart.slice(3, 5); // Last 2 digits = day
-  const months = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
-  const monthName = months[month - 1];
-
-  return `SENSEX${day}${monthName}${year}${strike}${type}`;
-}
-
-// Convert Sensex DDMMMYY back to YYMDD format for token lookup (e.g., 07MAY26 -> 26507)
-function formatSensexSymbolForLookup(symbol) {
-  if (!symbol.startsWith("SENSEX")) return symbol;
-
-  const match = symbol.match(/^SENSEX(\d{2})(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)(\d{2})(\d{5})(CE|PE)$/);
-  if (!match) return symbol; // Already in YYMDD format or different format
-
-  const [, day, monthName, year, strike, type] = match;
-  const months = { 'JAN': 1, 'FEB': 2, 'MAR': 3, 'APR': 4, 'MAY': 5, 'JUN': 6,
-                  'JUL': 7, 'AUG': 8, 'SEP': 9, 'OCT': 10, 'NOV': 11, 'DEC': 12 };
-  const month = String(months[monthName]);
-
-  return `SENSEX${year}${month}${day}${strike}${type}`;
-}
-
 // Store latest market time (updated by build-candle)
 let latestMarketTime = null;
 
@@ -177,13 +145,18 @@ app.post("/active-symbol", (req, res) => {
 // Return the active strategy symbols array
 app.get("/active-strategy-symbols", (req, res) => {
   res.json({
-    symbols: activeStrategySymbols.map(s => formatSensexSymbolForDisplay(s)),
+    symbols: activeStrategySymbols,
   });
 });
 
-// Validate that a symbol looks like a real NIFTY/SENSEX option (e.g. NIFTY26MAY2624000CE)
+// Validate that a symbol looks like a real NIFTY/SENSEX option
+// NIFTY:    NIFTY26MAY2624000CE  (DDMMMYY + strike + CE/PE)
+// SENSEX monthly: SENSEX23OCT66400CE  (YY + MMM + strike + CE/PE)
+// SENSEX weekly:  SENSEX23N0366400CE  (YY + month-letter + DD + strike + CE/PE)
 function isValidOptionSymbol(sym) {
-  return /^(NIFTY|SENSEX)\d{2}[A-Z]{3}\d{2}\d+[A-Z]{2,3}$/.test(sym);
+  return /^NIFTY\d{2}[A-Z]{3}\d{2}\d+(CE|PE)$/.test(sym) ||
+         /^SENSEX\d{2}[A-Z]{3}\d+(CE|PE)$/.test(sym) ||
+         /^SENSEX\d{2}[A-Z]\d{2}\d+(CE|PE)$/.test(sym);
 }
 
 // Add a symbol to active strategy symbols (max 2)
@@ -194,8 +167,7 @@ app.post("/active-strategy-symbols", (req, res) => {
     return res.status(400).json({ message: "symbol is required" });
   }
 
-  // Convert to Angel format for lookup
-  const angelSymbol = formatSensexSymbolForLookup(String(symbol).trim());
+  const angelSymbol = String(symbol).trim();
 
   if (!isValidOptionSymbol(angelSymbol)) {
     return res.status(400).json({ message: "invalid symbol format" });
@@ -225,7 +197,7 @@ app.post("/active-strategy-symbols", (req, res) => {
 
   res.json({
     message: "symbol added",
-    symbols: activeStrategySymbols.map(s => formatSensexSymbolForDisplay(s)),
+    symbols: activeStrategySymbols,
   });
 });
 
@@ -237,8 +209,7 @@ app.delete("/active-strategy-symbols", (req, res) => {
     return res.status(400).json({ message: "symbol is required" });
   }
 
-  // Convert to Angel format for lookup
-  const angelSymbol = formatSensexSymbolForLookup(String(symbol).trim());
+  const angelSymbol = String(symbol).trim();
 
   activeStrategySymbols = activeStrategySymbols.filter((s) => s !== angelSymbol);
 
@@ -254,20 +225,20 @@ app.delete("/active-strategy-symbols", (req, res) => {
 
   res.json({
     message: "symbol removed",
-    symbols: activeStrategySymbols.map(s => formatSensexSymbolForDisplay(s)),
+    symbols: activeStrategySymbols,
   });
 });
 
 // Return and drain pending symbol removals (polled by build-candle.js)
 app.get("/pending-symbol-removals", (req, res) => {
   const removals = pendingSymbolRemovals.splice(0);
-  res.json({ symbols: removals.map(s => formatSensexSymbolForDisplay(s)) });
+  res.json({ symbols: removals });
 });
 
 // Return all current watchlist symbols
 app.get("/watchlist-symbols", (req, res) => {
   res.json({
-    symbols: watchlistSymbols.map(s => formatSensexSymbolForDisplay(s)),
+    symbols: watchlistSymbols,
   });
 });
 
@@ -285,7 +256,7 @@ app.post("/watchlist-symbols", (req, res) => {
   const prevSymbols = watchlistSymbols;
 
   watchlistSymbols = symbols
-    .map((symbol) => formatSensexSymbolForLookup(String(symbol).trim()))
+    .map((symbol) => String(symbol).trim())
     .filter(Boolean);
 
   // Auto-remove active strategy symbols no longer in the watchlist
@@ -305,7 +276,7 @@ app.post("/watchlist-symbols", (req, res) => {
 
   res.json({
     message: "watchlist symbols updated",
-    symbols: watchlistSymbols.map(s => formatSensexSymbolForDisplay(s)),
+    symbols: watchlistSymbols,
   });
 });
 
@@ -341,8 +312,7 @@ app.post("/price-update", (req, res) => {
     return res.status(400).json({ message: "ltp is required" });
   }
 
-  // Convert to Angel format for consistent storage
-  const angelSymbol = formatSensexSymbolForLookup(String(symbol).trim());
+  const angelSymbol = String(symbol).trim();
 
   latestPricesBySymbol[angelSymbol] = {
     ltp: Number(ltp),
@@ -454,7 +424,7 @@ app.get("/watchlist", (req, res) => {
     .map(toWatchlistItem)
     .map((item) => ({
       ...item,
-      symbol: formatSensexSymbolForDisplay(item.symbol),
+      symbol: item.symbol,
     }));
 
   res.json(matches);
@@ -476,8 +446,7 @@ app.get("/prices", (req, res) => {
     .filter(Boolean);
 
   const result = symbols.map((symbol) => {
-    // Convert display format to Angel format for lookup
-    const angelSymbol = formatSensexSymbolForLookup(symbol);
+    const angelSymbol = symbol;
     const priceInfo = latestPricesBySymbol[angelSymbol];
 
     return {

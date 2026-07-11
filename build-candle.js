@@ -140,7 +140,7 @@ async function getActiveStrategySymbols() {
   try {
     const response = await fetch("http://localhost:2000/active-strategy-symbols");
     const data = await response.json();
-    return Array.isArray(data.symbols) ? data.symbols.map(s => formatSensexSymbolForLookup(s)) : [];
+    return Array.isArray(data.symbols) ? data.symbols : [];
   } catch (error) {
     console.error("Get active strategy symbols failed:", error.message);
     return [];
@@ -152,7 +152,7 @@ async function getPendingRemovals() {
   try {
     const response = await fetch("http://localhost:2000/pending-symbol-removals");
     const data = await response.json();
-    return Array.isArray(data.symbols) ? data.symbols.map(s => formatSensexSymbolForLookup(s)) : [];
+    return Array.isArray(data.symbols) ? data.symbols : [];
   } catch (error) {
     return [];
   }
@@ -168,7 +168,7 @@ async function getWatchlistSymbols() {
       return [];
     }
 
-    return data.symbols.map(s => formatSensexSymbolForLookup(s));
+    return data.symbols;
   } catch (error) {
     console.error("Get watchlist symbols failed:", error.message);
     return [];
@@ -185,21 +185,6 @@ function getTokenForSymbol(symbol) {
   }
 
   return token;
-}
-
-// Convert Sensex DDMMMYY back to YYMDD format for token lookup (e.g., 07MAY26 -> 26507)
-function formatSensexSymbolForLookup(symbol) {
-  if (!symbol.startsWith("SENSEX")) return symbol;
-
-  const match = symbol.match(/^SENSEX(\d{2})(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)(\d{2})(\d{5})(CE|PE)$/);
-  if (!match) return symbol; // Already in YYMDD format or different format
-
-  const [, day, monthName, year, strike, type] = match;
-  const months = { 'JAN': 1, 'FEB': 2, 'MAR': 3, 'APR': 4, 'MAY': 5, 'JUN': 6,
-                  'JUL': 7, 'AUG': 8, 'SEP': 9, 'OCT': 10, 'NOV': 11, 'DEC': 12 };
-  const month = String(months[monthName]);
-
-  return `SENSEX${year}${month}${day}${strike}${type}`;
 }
 
 // Get exchange type based on symbol (NIFTY=2 for NFO, SENSEX=4 for BFO)
