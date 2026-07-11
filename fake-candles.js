@@ -190,7 +190,7 @@ async function run() {
     feeds.push({ symbol: symbols[1], csvPath: CSV_PATH_2 });
   }
 
-  const HISTORY_COUNT = 1126; //376 earler;
+  const HISTORY_COUNT = 752; //376 earler; 752//1126
 
   // Load and parse all CSVs
   const feedData = feeds.map((f) => {
