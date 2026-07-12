@@ -156,7 +156,7 @@ app.get("/active-strategy-symbols", (req, res) => {
 function isValidOptionSymbol(sym) {
   return /^NIFTY\d{2}[A-Z]{3}\d{2}\d+(CE|PE)$/.test(sym) ||
          /^SENSEX\d{2}[A-Z]{3}\d+(CE|PE)$/.test(sym) ||
-         /^SENSEX\d{2}[A-Z]\d{2}\d+(CE|PE)$/.test(sym);
+         /^SENSEX\d{2}[1-9OND]\d{2}\d+(CE|PE)$/.test(sym);
 }
 
 // Add a symbol to active strategy symbols (max 2)
