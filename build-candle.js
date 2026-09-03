@@ -541,7 +541,7 @@ async function subscribeToSymbols(ws, smartApi) {
               ":" +
               String(now.getMinutes()).padStart(2, "0");
 
-            const from = new Date(now.getTime() - 10 * 24 * 60 * 60 * 1000);
+            const from = new Date(now.getTime() - 5 * 24 * 60 * 60 * 1000);
 
             const fromDate =
               from.getFullYear() +
