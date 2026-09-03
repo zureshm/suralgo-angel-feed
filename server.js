@@ -77,7 +77,7 @@ let latestMarketTime = null;
 let activeSymbol = null;
 
 // Active strategy symbols (max 2 simultaneous, e.g. one CE + one PE)
-const MAX_ACTIVE_STRATEGY_SYMBOLS = 6;
+const MAX_ACTIVE_STRATEGY_SYMBOLS = 8;
 
 let activeStrategySymbols = [];
 
