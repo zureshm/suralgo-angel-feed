@@ -12,6 +12,7 @@
 // Usage (dual symbol — uses temp_feed.csv + temp_feed2.csv):
 //   node fake-candles.js NIFTY02APR2524500CE NIFTY02APR2524500PE
 //   node fake-candles.js NIFTY02APR2524500CE NIFTY02APR2524500PE --speed 500
+//   node fake-candles.js NIFTY15SEP2623100CE NIFTY15SEP2623450PE NIFTY15SEP2623200CE NIFTY15SEP2623200PE --speed 1000
 //
 // Prerequisites:
 //   - angel-feed server.js running on port 2000 (just `node server.js`, no build-candle needed)
@@ -56,6 +57,8 @@ const FEED_URL = "http://localhost:2000";
 
 const CSV_PATH_1 = path.join(__dirname, "CE.csv");
 const CSV_PATH_2 = path.join(__dirname, "PE.csv");
+const CSV_PATH_3 = path.join(__dirname, "CE2.csv");
+const CSV_PATH_4 = path.join(__dirname, "PE2.csv");
 
 // Parse CLI args — first 1-2 non-flag args are symbols
 const args = process.argv.slice(2);
@@ -189,8 +192,14 @@ async function run() {
   if (symbols.length >= 2) {
     feeds.push({ symbol: symbols[1], csvPath: CSV_PATH_2 });
   }
+   if (symbols.length >= 3) {
+    feeds.push({ symbol: symbols[2], csvPath: CSV_PATH_3 });
+  }
+   if (symbols.length >= 4) {
+    feeds.push({ symbol: symbols[3], csvPath: CSV_PATH_4 });
+  }
 
-  const HISTORY_COUNT = 752; //376 earler; 752//1126
+  const HISTORY_COUNT = 376; //376(342) earler; 752(717)//1126
 
   // Load and parse all CSVs
   const feedData = feeds.map((f) => {

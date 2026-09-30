@@ -864,6 +864,14 @@ function _doPushNifty50() {
   }).catch(() => {});
 }
 
+// Re-push NIFTY state periodically so a restarted server.js gets refilled
+// even when no ticks are arriving (market closed / idle feed)
+setInterval(() => {
+  if (nifty50State.completedCandles.length > 0 || nifty50State.currentCandle) {
+    _doPushNifty50();
+  }
+}, 15000);
+
 async function subscribeNifty50(ws, smartApi) {
   if (nifty50State.subscribed) return;
 
