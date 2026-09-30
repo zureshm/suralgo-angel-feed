@@ -394,6 +394,11 @@ app.post("/nifty50-candle-update", (req, res) => {
   res.json({ ok: true });
 });
 
+// REST history endpoint — frontend fetches once on chart mount (Zerodha-style)
+app.get("/nifty50-candles", (req, res) => {
+  res.json(nifty50CandleData);
+});
+
 // Track connected Nifty50 WebSocket clients
 const nifty50Clients = new Set();
 
