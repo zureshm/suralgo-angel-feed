@@ -62,6 +62,27 @@ let nifty50State = {
   historyLoaded: false,
 };
 
+// Always-on index signal streams fed to the strategy under fixed names.
+// FAKE_CE = Nifty50 candles as-is. FAKE_PE = vertically mirrored around a
+// fixed anchor (2× reference price) — index dump reads as an uptrend so
+// PE signals align directionally.
+const FAKE_CE_SYMBOL = "FAKE_CE";
+const FAKE_PE_SYMBOL = "FAKE_PE";
+
+let fakePeAnchor = null; // set once — 2× reference price for mirroring
+
+function mirrorCandle(c) {
+  if (fakePeAnchor == null) return { ...c };
+  return {
+    time: c.time,
+    open: fakePeAnchor - c.open,
+    high: fakePeAnchor - c.low,
+    low: fakePeAnchor - c.high,
+    close: fakePeAnchor - c.close,
+    volume: c.volume || 0,
+  };
+}
+
 // Track which strategy symbols are currently subscribed for candle building
 let subscribedStrategySymbols = new Set();
 
@@ -780,6 +801,7 @@ function handleNifty50Tick(tick) {
   const minute = extractTickMinute(tick);
 
   if (!price || !minute) return;
+  if (fakePeAnchor == null) fakePeAnchor = 2 * price;
 
   if (!nifty50State.lastMinute) {
     nifty50State.lastMinute = minute;
@@ -809,6 +831,7 @@ function handleNifty50Tick(tick) {
   nifty50State.completedCandles.push(finishedCandle);
 
   // Fill gaps
+  const fakeBatch = [finishedCandle];
   let nextMinute = getNextMinute(nifty50State.lastMinute);
   while (nextMinute !== minute) {
     const fillerCandle = {
@@ -820,6 +843,7 @@ function handleNifty50Tick(tick) {
       volume: 0,
     };
     nifty50State.completedCandles.push(fillerCandle);
+    fakeBatch.push(fillerCandle);
     nextMinute = getNextMinute(nextMinute);
   }
 
@@ -840,6 +864,12 @@ function handleNifty50Tick(tick) {
 
   console.log("[NIFTY50] Completed candle:", finishedCandle.time, "| Total:", nifty50State.completedCandles.length);
   pushNifty50Update();
+
+  // Feed the always-on FAKE_CE / FAKE_PE strategy streams (fire-and-forget)
+  for (const c of fakeBatch) {
+    sendCandleToStrategy(FAKE_CE_SYMBOL, c);
+    sendCandleToStrategy(FAKE_PE_SYMBOL, mirrorCandle(c));
+  }
 }
 
 // Throttle: push at most once per 500ms
@@ -907,6 +937,12 @@ async function subscribeNifty50(ws, smartApi) {
         nifty50State.historyLoaded = true;
         console.log("[NIFTY50] Historical candles loaded:", nifty50State.completedCandles.length);
         pushNifty50Update();
+
+        // Seed the always-on FAKE_CE / FAKE_PE strategy streams with index history
+        const lastHistClose = Number(nifty50State.completedCandles[nifty50State.completedCandles.length - 1]?.close);
+        if (Number.isFinite(lastHistClose) && lastHistClose > 0) fakePeAnchor = 2 * lastHistClose;
+        await sendHistoricalCandlesToStrategy(FAKE_CE_SYMBOL, nifty50State.completedCandles);
+        await sendHistoricalCandlesToStrategy(FAKE_PE_SYMBOL, nifty50State.completedCandles.map(mirrorCandle));
       } else {
         console.log("[NIFTY50] No historical candles returned");
       }
