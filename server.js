@@ -216,6 +216,14 @@ app.delete("/active-strategy-symbols", (req, res) => {
   // Queue for build-candle.js to pick up
   pendingSymbolRemovals.push(angelSymbol);
 
+  // Tell strategy server to drop this symbol's candle history + last eval,
+  // so a frozen stale signal can't fire if the symbol is re-added later
+  fetch("http://localhost:4000/remove-symbol", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ symbol: angelSymbol }),
+  }).catch(() => {});
+
   // Keep legacy activeSymbol in sync
   if (activeSymbol === angelSymbol) {
     activeSymbol = activeStrategySymbols[0] || null;
